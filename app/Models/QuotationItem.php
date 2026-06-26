@@ -23,6 +23,7 @@ class QuotationItem extends Model
         'quantity',
         'uom',
         'unit_price',
+        'vat_rate',
         'total_price',
     ];
 
@@ -32,6 +33,7 @@ class QuotationItem extends Model
             'line_number' => 'integer',
             'quantity' => 'decimal:3',
             'unit_price' => 'decimal:3',
+            'vat_rate' => 'decimal:3',
             'total_price' => 'decimal:3',
         ];
     }

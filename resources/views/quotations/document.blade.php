@@ -82,7 +82,8 @@
         }
 
         .items-table td:nth-child(4),
-        .items-table td:nth-child(5) {
+        .items-table td:nth-child(5),
+        .items-table td:nth-child(6) {
             text-align: right;
         }
 
@@ -187,10 +188,11 @@
     <table class="items-table">
         <thead>
             <tr>
-                <th style="width: 8%;">SL No</th>
-                <th style="width: 54%;">Description</th>
+                <th style="width: 7%;">SL No</th>
+                <th style="width: 47%;">Description</th>
                 <th style="width: 10%;">QTY</th>
-                <th style="width: 14%;">Unit Price</th>
+                <th style="width: 13%;">Unit Price</th>
+                <th style="width: 9%;">VAT %</th>
                 <th style="width: 14%;">Total excl. VAT</th>
             </tr>
         </thead>
@@ -204,12 +206,21 @@
                     </td>
                     <td>{{ $item['quantity'] }} {{ $item['uom'] }}</td>
                     <td>{{ $item['unit_price'] }}</td>
+                    <td>{{ $item['vat_rate'] ?? '0.000' }}</td>
                     <td>{{ $item['total_price'] }}</td>
                 </tr>
             @endforeach
             <tr>
-                <td colspan="4" class="total-label">Total Net Amount {{ $snapshot['quotation']['currency'] }} (Excluding VAT):</td>
+                <td colspan="5" class="total-label">Total Net Amount {{ $snapshot['quotation']['currency'] }} (Excluding VAT):</td>
                 <td>{{ $snapshot['totals']['subtotal'] }}</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="total-label">VAT Amount {{ $snapshot['quotation']['currency'] }}:</td>
+                <td>{{ $snapshot['totals']['vat'] ?? '0.000' }}</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="total-label">Total Amount {{ $snapshot['quotation']['currency'] }} (Including VAT):</td>
+                <td>{{ $snapshot['totals']['grand_total'] ?? $snapshot['totals']['subtotal'] }}</td>
             </tr>
         </tbody>
     </table>

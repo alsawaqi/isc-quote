@@ -26,6 +26,7 @@ interface QuotationItem {
     quantity: string;
     uom: string;
     unit_price: string;
+    vat_rate: string;
     total_price: string;
 }
 
@@ -112,6 +113,10 @@ const latestVersion = computed(() => {
 const subtotal = computed(() => {
     return quotation.value?.items.reduce((total, item) => total + Number(item.total_price), 0) ?? 0;
 });
+const vatTotal = computed(() => {
+    return quotation.value?.items.reduce((total, item) => total + Number(item.total_price) * (Number(item.vat_rate ?? 0) / 100), 0) ?? 0;
+});
+const grandTotal = computed(() => subtotal.value + vatTotal.value);
 const canCreateBuyerPo = computed(() => {
     return (
         Boolean(quotation.value) &&
@@ -301,8 +306,8 @@ onMounted(loadDetail);
                         <strong>{{ quotation.versions.length }}</strong>
                     </article>
                     <article class="module-stat">
-                        <span>Total</span>
-                        <strong>{{ quotation.accepted_invoice_currency }} {{ money(subtotal) }}</strong>
+                        <span>Total incl. VAT</span>
+                        <strong>{{ quotation.accepted_invoice_currency }} {{ money(grandTotal) }}</strong>
                     </article>
                     <article class="module-stat">
                         <span>Buyer PO</span>
@@ -369,9 +374,13 @@ onMounted(loadDetail);
                         <div class="review-list">
                             <article v-for="item in quotation.items" :key="item.id">
                                 <strong>{{ item.line_number }}. {{ item.title }}</strong>
-                                <span>{{ item.manufacturer_name ?? '-' }} - {{ item.quantity }} {{ item.uom }} x {{ item.unit_price }}</span>
-                                <b>{{ quotation.accepted_invoice_currency }} {{ item.total_price }}</b>
+                                <span>{{ item.manufacturer_name ?? '-' }} - {{ item.quantity }} {{ item.uom }} x {{ item.unit_price }} + {{ item.vat_rate }}% VAT</span>
+                                <b>{{ quotation.accepted_invoice_currency }} {{ money(Number(item.total_price) + Number(item.total_price) * (Number(item.vat_rate ?? 0) / 100)) }}</b>
                             </article>
+                        </div>
+                        <div class="review-total">
+                            <span>Subtotal / VAT</span>
+                            <strong>{{ quotation.accepted_invoice_currency }} {{ money(subtotal) }} / {{ money(vatTotal) }}</strong>
                         </div>
                     </section>
 

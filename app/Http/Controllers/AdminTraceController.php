@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BuyerPo;
 use App\Models\Company;
 use App\Models\FollowUpAuditLog;
 use App\Models\FollowUpComment;
@@ -11,12 +12,15 @@ use App\Models\Quotation;
 use App\Models\QuotationActivityLog;
 use App\Models\QuotationItem;
 use App\Models\Supplier;
+use App\Models\SupplierPo;
+use App\Models\SupplierPoLine;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminTraceController extends Controller
 {
@@ -69,6 +73,44 @@ class AdminTraceController extends Controller
         ]);
     }
 
+    public function exportQuotations(Request $request): StreamedResponse
+    {
+        $this->authorizeAdmin($request);
+
+        $filters = $this->filters($request);
+        $query = $this->applyQuotationFilters(Quotation::query(), $filters);
+
+        return $this->streamCsv(
+            'quotation-trace-'.now()->format('Y-m-d').'.csv',
+            ['Quotation Reference', 'Buyer', 'Buyer PO', 'Supplier PO', 'Status', 'Stage', 'Items', 'Total', 'Latest Comment', 'Updated At'],
+            function ($handle) use ($query): void {
+                (clone $query)
+                    ->with($this->quotationRelations())
+                    ->withCount('items')
+                    ->withSum('items', 'total_price')
+                    ->orderByDesc('updated_at')
+                    ->orderByDesc('id')
+                    ->get()
+                    ->each(function (Quotation $quotation) use ($handle): void {
+                        $record = $this->transformQuotationSummary($quotation);
+
+                        fputcsv($handle, $this->csvRow([
+                            $record['quotation_reference'],
+                            $record['buyer_company_name'],
+                            $record['buyer_po_numbers'],
+                            $record['supplier_po_references'],
+                            $record['status_label'],
+                            $record['current_stage_label'],
+                            $record['items_count'],
+                            $record['items_sum_total_price'],
+                            $record['latest_comment']['comment'] ?? null,
+                            $record['updated_at'],
+                        ]));
+                    });
+            },
+        );
+    }
+
     public function items(Request $request): JsonResponse
     {
         $this->authorizeAdmin($request);
@@ -91,6 +133,45 @@ class AdminTraceController extends Controller
                 ->map(fn (QuotationItem $item): array => $this->transformTraceItem($item, includeComments: false, includeTimeline: true))
                 ->values(),
         ]);
+    }
+
+    public function exportItems(Request $request): StreamedResponse
+    {
+        $this->authorizeAdmin($request);
+
+        $filters = $this->filters($request);
+        $query = $this->applyItemFilters(QuotationItem::query(), $filters);
+
+        return $this->streamCsv(
+            'item-trace-'.now()->format('Y-m-d').'.csv',
+            ['Item', 'Quotation', 'Buyer', 'Buyer PO', 'Supplier', 'Supplier PO', 'Manufacturer', 'Status', 'Stage', 'Quantity', 'UOM', 'Latest Comment', 'Next Follow-Up'],
+            function ($handle) use ($query): void {
+                (clone $query)
+                    ->with($this->itemRelations())
+                    ->orderByDesc('updated_at')
+                    ->orderByDesc('id')
+                    ->get()
+                    ->each(function (QuotationItem $item) use ($handle): void {
+                        $record = $this->transformTraceItem($item, includeComments: false, includeTimeline: false);
+
+                        fputcsv($handle, $this->csvRow([
+                            $record['title'] ?? $record['product_name'],
+                            $record['quotation_reference'],
+                            $record['buyer_company_name'],
+                            $record['buyer_po_number'],
+                            $record['supplier_company_name'],
+                            $record['supplier_po_reference'],
+                            $record['manufacturer_name'],
+                            $record['status_label'],
+                            $record['current_stage_label'],
+                            $record['quantity'],
+                            $record['uom'],
+                            $record['latest_comment']['comment'] ?? null,
+                            $record['next_follow_up_at'],
+                        ]));
+                    });
+            },
+        );
     }
 
     private function authorizeAdmin(Request $request): void
@@ -120,7 +201,7 @@ class AdminTraceController extends Controller
     }
 
     /**
-     * @param array{search: string, status: string, buyer_id: string, supplier_id: string, manufacturer_id: string, follow_up_status: string} $filters
+     * @param  array{search: string, status: string, buyer_id: string, supplier_id: string, manufacturer_id: string, follow_up_status: string}  $filters
      */
     private function applyQuotationFilters(Builder $query, array $filters): Builder
     {
@@ -134,16 +215,16 @@ class AdminTraceController extends Controller
                     ->orWhere('status', 'like', $like)
                     ->orWhereHas('buyerCompany', fn (Builder $relation): Builder => $relation
                         ->where('name', 'like', $like)
-                        ->orWhere('company_code', 'like', $like))
-                    ->orWhereHas('buyerPos', fn (Builder $relation): Builder => $relation->where('po_number', 'like', $like))
+                        ->orWhere('company_code', 'like', $like), '>=', 1)
+                    ->orWhereHas('buyerPos', fn (Builder $relation): Builder => $relation->where('po_number', 'like', $like), '>=', 1)
                     ->orWhereHas('items', fn (Builder $relation): Builder => $relation
                         ->where('product_name', 'like', $like)
                         ->orWhere('title', 'like', $like)
                         ->orWhere('buyer_description', 'like', $like)
-                        ->orWhere('manufacturer_description', 'like', $like))
-                    ->orWhereHas('items.manufacturer', fn (Builder $relation): Builder => $relation->where('name', 'like', $like))
-                    ->orWhereHas('items.supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('po_reference', 'like', $like))
-                    ->orWhereHas('items.supplierPoLines.supplierPo.supplierCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like));
+                        ->orWhere('manufacturer_description', 'like', $like), '>=', 1)
+                    ->orWhereHas('items.manufacturer', fn (Builder $relation): Builder => $relation->where('name', 'like', $like), '>=', 1)
+                    ->orWhereHas('items.supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('po_reference', 'like', $like), '>=', 1)
+                    ->orWhereHas('items.supplierPoLines.supplierPo.supplierCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like), '>=', 1);
             });
         }
 
@@ -156,22 +237,22 @@ class AdminTraceController extends Controller
         }
 
         if (ctype_digit($filters['manufacturer_id'])) {
-            $query->whereHas('items', fn (Builder $relation): Builder => $relation->where('manufacturer_id', (int) $filters['manufacturer_id']));
+            $query->whereHas('items', fn (Builder $relation): Builder => $relation->where('manufacturer_id', (int) $filters['manufacturer_id']), '>=', 1);
         }
 
         if (ctype_digit($filters['supplier_id'])) {
-            $query->whereHas('items.supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('supplier_id', (int) $filters['supplier_id']));
+            $query->whereHas('items.supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('supplier_id', (int) $filters['supplier_id']), '>=', 1);
         }
 
         if ($filters['follow_up_status'] !== '' && $filters['follow_up_status'] !== 'all') {
-            $query->whereHas('items.supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['follow_up_status']));
+            $query->whereHas('items.supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['follow_up_status']), '>=', 1);
         }
 
         return $query;
     }
 
     /**
-     * @param array{search: string, status: string, buyer_id: string, supplier_id: string, manufacturer_id: string, follow_up_status: string} $filters
+     * @param  array{search: string, status: string, buyer_id: string, supplier_id: string, manufacturer_id: string, follow_up_status: string}  $filters
      */
     private function applyItemFilters(Builder $query, array $filters): Builder
     {
@@ -186,21 +267,21 @@ class AdminTraceController extends Controller
                     ->orWhereHas('quotation', fn (Builder $relation): Builder => $relation
                         ->where('quotation_reference', 'like', $like)
                         ->orWhere('rfq_number', 'like', $like)
-                        ->orWhere('pr_number', 'like', $like))
-                    ->orWhereHas('quotation.buyerCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like))
-                    ->orWhereHas('quotation.buyerPos', fn (Builder $relation): Builder => $relation->where('po_number', 'like', $like))
-                    ->orWhereHas('manufacturer', fn (Builder $relation): Builder => $relation->where('name', 'like', $like))
-                    ->orWhereHas('supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('po_reference', 'like', $like))
-                    ->orWhereHas('supplierPoLines.supplierPo.supplierCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like));
+                        ->orWhere('pr_number', 'like', $like), '>=', 1)
+                    ->orWhereHas('quotation.buyerCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like), '>=', 1)
+                    ->orWhereHas('quotation.buyerPos', fn (Builder $relation): Builder => $relation->where('po_number', 'like', $like), '>=', 1)
+                    ->orWhereHas('manufacturer', fn (Builder $relation): Builder => $relation->where('name', 'like', $like), '>=', 1)
+                    ->orWhereHas('supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('po_reference', 'like', $like), '>=', 1)
+                    ->orWhereHas('supplierPoLines.supplierPo.supplierCompany', fn (Builder $relation): Builder => $relation->where('name', 'like', $like), '>=', 1);
             });
         }
 
         if ($filters['status'] !== '' && $filters['status'] !== 'all') {
-            $query->whereHas('supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['status']));
+            $query->whereHas('supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['status']), '>=', 1);
         }
 
         if (ctype_digit($filters['buyer_id'])) {
-            $query->whereHas('quotation', fn (Builder $relation): Builder => $relation->where('buyer_company_id', (int) $filters['buyer_id']));
+            $query->whereHas('quotation', fn (Builder $relation): Builder => $relation->where('buyer_company_id', (int) $filters['buyer_id']), '>=', 1);
         }
 
         if (ctype_digit($filters['manufacturer_id'])) {
@@ -208,11 +289,11 @@ class AdminTraceController extends Controller
         }
 
         if (ctype_digit($filters['supplier_id'])) {
-            $query->whereHas('supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('supplier_id', (int) $filters['supplier_id']));
+            $query->whereHas('supplierPoLines.supplierPo', fn (Builder $relation): Builder => $relation->where('supplier_id', (int) $filters['supplier_id']), '>=', 1);
         }
 
         if ($filters['follow_up_status'] !== '' && $filters['follow_up_status'] !== 'all') {
-            $query->whereHas('supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['follow_up_status']));
+            $query->whereHas('supplierPoLines.followUpItem', fn (Builder $relation): Builder => $relation->where('status', $filters['follow_up_status']), '>=', 1);
         }
 
         return $query;
@@ -280,9 +361,9 @@ class AdminTraceController extends Controller
         return [
             'quotations' => $quotationIds->count(),
             'items' => QuotationItem::query()->whereIn('quotation_id', $quotationIds)->count(),
-            'buyer_pos' => $quotationIds->isEmpty() ? 0 : \App\Models\BuyerPo::query()->whereIn('quotation_id', $quotationIds)->count(),
-            'supplier_pos' => $quotationIds->isEmpty() ? 0 : \App\Models\SupplierPo::query()
-                ->whereHas('lines', fn (Builder $line): Builder => $line->whereIn('quotation_id', $quotationIds))
+            'buyer_pos' => $quotationIds->isEmpty() ? 0 : BuyerPo::query()->whereIn('quotation_id', $quotationIds)->count(),
+            'supplier_pos' => $quotationIds->isEmpty() ? 0 : SupplierPo::query()
+                ->whereHas('lines', fn (Builder $line): Builder => $line->whereIn('quotation_id', $quotationIds), '>=', 1)
                 ->count(),
             'open_follow_ups' => $quotationIds->isEmpty() ? 0 : FollowUpItem::query()
                 ->whereIn('quotation_id', $quotationIds)
@@ -307,7 +388,7 @@ class AdminTraceController extends Controller
         return [
             'items' => $itemIds->count(),
             'quotations' => $itemIds->isEmpty() ? 0 : QuotationItem::query()->whereIn('id', $itemIds)->distinct('quotation_id')->count('quotation_id'),
-            'supplier_pos' => $itemIds->isEmpty() ? 0 : \App\Models\SupplierPoLine::query()->whereIn('quotation_item_id', $itemIds)->distinct('supplier_po_id')->count('supplier_po_id'),
+            'supplier_pos' => $itemIds->isEmpty() ? 0 : SupplierPoLine::query()->whereIn('quotation_item_id', $itemIds)->distinct('supplier_po_id')->count('supplier_po_id'),
             'open_follow_ups' => $itemIds->isEmpty() ? 0 : FollowUpItem::query()
                 ->whereIn('quotation_item_id', $itemIds)
                 ->whereNotIn('status', self::CLOSED_STATUSES)
@@ -502,7 +583,7 @@ class AdminTraceController extends Controller
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, FollowUpItem>
+     * @return Collection<int, FollowUpItem>
      */
     private function followUpsForQuotation(Quotation $quotation): Collection
     {
@@ -692,6 +773,55 @@ class AdminTraceController extends Controller
     private function like(string $value): string
     {
         return '%'.str_replace(['%', '_'], ['\\%', '\\_'], $value).'%';
+    }
+
+    /**
+     * @param  array<int, string>  $headings
+     */
+    private function streamCsv(string $filename, array $headings, callable $writeRows): StreamedResponse
+    {
+        return response()->streamDownload(function () use ($headings, $writeRows): void {
+            $handle = fopen('php://output', 'w');
+
+            if ($handle === false) {
+                return;
+            }
+
+            fputcsv($handle, $headings);
+            $writeRows($handle);
+            fclose($handle);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    /**
+     * @param  array<int, mixed>  $values
+     * @return array<int, string>
+     */
+    private function csvRow(array $values): array
+    {
+        return array_map(fn (mixed $value): string => $this->csvCell($value), $values);
+    }
+
+    private function csvCell(mixed $value): string
+    {
+        if ($value instanceof Collection) {
+            $value = $value->all();
+        }
+
+        if (is_array($value)) {
+            $value = implode(', ', array_filter($value, fn (mixed $item): bool => $item !== null && $item !== ''));
+        }
+
+        $text = trim(strip_tags((string) ($value ?? '')));
+        $text = preg_replace('/\s+/', ' ', $text) ?? $text;
+
+        if ($text !== '' && preg_match('/^[=+\-@]/', $text) === 1) {
+            return "'".$text;
+        }
+
+        return $text;
     }
 
     private function money(mixed $value): string

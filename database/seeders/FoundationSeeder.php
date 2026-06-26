@@ -21,6 +21,8 @@ class FoundationSeeder extends Seeder
             ...$this->actionPermissions('companies', 'Company'),
             ...$this->actionPermissions('contacts', 'Contact'),
             ...$this->actionPermissions('incoterms', 'Incoterm'),
+            ...$this->actionPermissions('uoms', 'UOM'),
+            ...$this->actionPermissions('currencies', 'Currency'),
             ...$this->actionPermissions('manufacturers', 'Manufacturer'),
             ...$this->actionPermissions('suppliers', 'Supplier'),
             ['group' => 'Users', 'name' => 'Manage Users', 'slug' => 'manage-users'],
@@ -188,6 +190,42 @@ class FoundationSeeder extends Seeder
                 [
                     ...$incoterm,
                     'description' => null,
+                    'status' => 'active',
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ]
+            );
+        }
+
+        foreach ([
+            ['code' => 'EA', 'name' => 'Each'],
+            ['code' => 'PCS', 'name' => 'Pieces'],
+            ['code' => 'SET', 'name' => 'Set'],
+            ['code' => 'LOT', 'name' => 'Lot'],
+            ['code' => 'MTR', 'name' => 'Meter'],
+            ['code' => 'KG', 'name' => 'Kilogram'],
+        ] as $uom) {
+            DB::table('uoms')->updateOrInsert(
+                ['code' => $uom['code']],
+                [
+                    ...$uom,
+                    'status' => 'active',
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ]
+            );
+        }
+
+        foreach ([
+            ['code' => 'OMR', 'name' => 'Omani Rial', 'exchange_rate' => '1.000000'],
+            ['code' => 'USD', 'name' => 'US Dollar', 'exchange_rate' => '2.600000'],
+            ['code' => 'EUR', 'name' => 'Euro', 'exchange_rate' => '2.820000'],
+            ['code' => 'GBP', 'name' => 'British Pound', 'exchange_rate' => '3.300000'],
+        ] as $currency) {
+            DB::table('currencies')->updateOrInsert(
+                ['code' => $currency['code']],
+                [
+                    ...$currency,
                     'status' => 'active',
                     'created_at' => $timestamp,
                     'updated_at' => $timestamp,

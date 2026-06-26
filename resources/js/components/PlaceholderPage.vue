@@ -40,6 +40,7 @@ interface FieldConfig {
     optionsKey?: string;
     required?: boolean;
     showOnEdit?: boolean;
+    step?: string;
     visibleForRole?: RoleSlug;
 }
 
@@ -220,6 +221,48 @@ const resourcePages: Record<string, ResourceConfig> = {
             { key: 'name', label: 'Name', required: true },
             { key: 'description', label: 'Description', type: 'textarea' },
             { key: 'reminder_days_before_delivery', label: 'Reminder Days Before Delivery', type: 'number', required: true },
+            { key: 'status', label: 'Status', type: 'select', optionsKey: 'statuses', required: true },
+        ],
+    },
+    uoms: {
+        eyebrow: 'Master Data',
+        title: 'UOMs',
+        singular: 'UOM',
+        endpoint: 'uoms',
+        action: 'New UOM',
+        columns: [
+            { key: 'id', label: 'ID' },
+            { key: 'code', label: 'Code' },
+            { key: 'name', label: 'Name' },
+            { key: 'status', label: 'Status' },
+            { key: 'created_at', label: 'Created At' },
+            { key: 'updated_at', label: 'Updated At' },
+        ],
+        fields: [
+            { key: 'code', label: 'Code', required: true },
+            { key: 'name', label: 'Name', required: true },
+            { key: 'status', label: 'Status', type: 'select', optionsKey: 'statuses', required: true },
+        ],
+    },
+    currencies: {
+        eyebrow: 'Master Data',
+        title: 'Currencies',
+        singular: 'Currency',
+        endpoint: 'currencies',
+        action: 'New Currency',
+        columns: [
+            { key: 'id', label: 'ID' },
+            { key: 'code', label: 'Code' },
+            { key: 'name', label: 'Name' },
+            { key: 'exchange_rate', label: 'Exchange Rate' },
+            { key: 'status', label: 'Status' },
+            { key: 'created_at', label: 'Created At' },
+            { key: 'updated_at', label: 'Updated At' },
+        ],
+        fields: [
+            { key: 'code', label: 'Code', required: true },
+            { key: 'name', label: 'Name', required: true },
+            { key: 'exchange_rate', label: 'Exchange Rate', type: 'number', required: true, step: '0.000001' },
             { key: 'status', label: 'Status', type: 'select', optionsKey: 'statuses', required: true },
         ],
     },
@@ -956,6 +999,7 @@ watch(
                             v-model="form[field.key]"
                             :type="field.type ?? 'text'"
                             :required="field.required && !(editingRecord && field.type === 'password')"
+                            :step="field.step"
                             :placeholder="editingRecord && field.type === 'password' ? 'Leave blank to keep current password' : ''"
                         />
                     </component>

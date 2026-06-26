@@ -182,6 +182,15 @@ onMounted(loadFollowUps);
                     <small>Group products by action, buyer, supplier PO, manufacturer, or stage.</small>
                 </span>
             </button>
+            <button class="workspace-action-card" type="button" @click="router.push('/follow-up/quotations')">
+                <span class="workspace-action-icon teal">
+                    <FileText :size="22" aria-hidden="true" />
+                </span>
+                <span>
+                    <strong>Quotation Follow-Up</strong>
+                    <small>Open a buyer quotation, review all items, and group shared workflows.</small>
+                </span>
+            </button>
             <button class="workspace-action-card" type="button" @click="router.push('/follow-up/visualization')">
                 <span class="workspace-action-icon amber">
                     <FileText :size="22" aria-hidden="true" />

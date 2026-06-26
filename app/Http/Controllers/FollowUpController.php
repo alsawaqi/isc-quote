@@ -2,24 +2,26 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\FollowUpComment;
-use App\Models\FollowUpAuditLog;
-use App\Models\FollowUpItem;
 use App\Models\DeliveryOrder;
+use App\Models\FollowUpAuditLog;
+use App\Models\FollowUpComment;
+use App\Models\FollowUpItem;
 use App\Models\Invoice;
 use App\Models\LogisticsCase;
 use App\Models\LogisticsEvent;
 use App\Models\PackingList;
 use App\Models\Payment;
+use App\Models\Quotation;
 use App\Models\ShippingDocument;
+use App\Models\User;
 use App\Services\DeliveryOrderDocumentService;
 use App\Services\InvoiceDocumentService;
 use App\Services\PackingListDocumentService;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -45,10 +47,15 @@ class FollowUpController extends Controller
 
     private const REQUIRED_SHIPPING_DOCUMENTS = [
         'supplier_invoice' => 'Supplier Invoice',
-        'bill_of_lading' => 'Bill of Lading',
-        'airway_bill' => 'Airway Bill',
         'certificate_of_origin' => 'Certificate of Origin',
         'packing_list' => 'Packing List',
+    ];
+
+    private const OPTIONAL_SHIPPING_DOCUMENTS = [
+        'bill_of_lading' => 'Bill of Lading',
+        'airway_bill' => 'Airway Bill',
+        'land_transport' => 'Land Transport',
+        'carrier' => 'Carrier',
     ];
 
     private const GROUP_BY_OPTIONS = [
@@ -130,6 +137,115 @@ class FollowUpController extends Controller
 
         return response()->json([
             'data' => $this->transformStoredFollowUpItem($request, $followUpItem, false),
+        ]);
+    }
+
+    public function quotationIndex(Request $request): JsonResponse
+    {
+        $this->authorizeFollowUp($request);
+
+        $items = $this->visibleItemsQuery($request)
+            ->with($this->itemRelations(false))
+            ->latest('id')
+            ->limit(750)
+            ->get();
+
+        return response()->json([
+            'data' => $items
+                ->groupBy('quotation_id')
+                ->map(fn (Collection $quotationItems): array => $this->transformQuotationSummary($quotationItems))
+                ->sortByDesc('latest_follow_up_item_id')
+                ->values(),
+        ]);
+    }
+
+    public function quotationShow(Request $request, Quotation $quotation): JsonResponse
+    {
+        $this->authorizeFollowUp($request);
+
+        return response()->json([
+            'data' => $this->transformQuotationWorkspace($request, $quotation),
+        ]);
+    }
+
+    public function storeQuotationGroup(Request $request, Quotation $quotation): JsonResponse
+    {
+        $this->authorizeFollowUp($request);
+
+        $validated = $request->validate([
+            'group_name' => ['required', 'string', 'max:150'],
+            'workflow_mode' => ['required', Rule::in(['shared', 'individual'])],
+            'follow_up_item_ids' => ['required', 'array', 'min:1', 'max:100'],
+            'follow_up_item_ids.*' => ['required', 'integer', 'distinct'],
+        ]);
+
+        $ids = collect($validated['follow_up_item_ids'])->map(fn ($id): int => (int) $id)->values();
+        $items = FollowUpItem::query()
+            ->where('quotation_id', $quotation->id)
+            ->whereIn('id', $ids)
+            ->get();
+
+        if ($items->count() !== $ids->count()) {
+            throw ValidationException::withMessages([
+                'follow_up_item_ids' => 'All selected items must belong to this quotation follow-up workspace.',
+            ]);
+        }
+
+        $groupKey = (string) Str::uuid();
+        FollowUpItem::query()
+            ->whereIn('id', $ids)
+            ->update([
+                'follow_up_group_key' => $groupKey,
+                'follow_up_group_name' => trim((string) $validated['group_name']),
+                'follow_up_group_mode' => $validated['workflow_mode'],
+                'updated_at' => now(),
+            ]);
+
+        foreach ($items as $item) {
+            $this->logFollowUpAudit($item, $request, $this->workflowStageFor($item), 'follow_up.grouped', 'Follow-up item added to quotation group.', [
+                'follow_up_group_key' => $groupKey,
+                'follow_up_group_name' => trim((string) $validated['group_name']),
+                'follow_up_group_mode' => $validated['workflow_mode'],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Follow-up group saved.',
+            'data' => $this->transformQuotationWorkspace($request, $quotation),
+        ], 201);
+    }
+
+    public function splitQuotationGroup(Request $request, Quotation $quotation, string $groupKey): JsonResponse
+    {
+        $this->authorizeFollowUp($request);
+
+        $items = FollowUpItem::query()
+            ->where('quotation_id', $quotation->id)
+            ->where('follow_up_group_key', $groupKey)
+            ->get();
+
+        if ($items->isEmpty()) {
+            abort(404);
+        }
+
+        FollowUpItem::query()
+            ->whereIn('id', $items->pluck('id'))
+            ->update([
+                'follow_up_group_key' => null,
+                'follow_up_group_name' => null,
+                'follow_up_group_mode' => 'individual',
+                'updated_at' => now(),
+            ]);
+
+        foreach ($items as $item) {
+            $this->logFollowUpAudit($item, $request, $this->workflowStageFor($item), 'follow_up.group_split', 'Follow-up group split into individual items.', [
+                'follow_up_group_key' => $groupKey,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Follow-up group split into individual items.',
+            'data' => $this->transformQuotationWorkspace($request, $quotation),
         ]);
     }
 
@@ -273,14 +389,8 @@ class FollowUpController extends Controller
         $this->authorizeFollowUpItem($request, $followUpItem);
         $this->ensureShippingDocuments($followUpItem);
 
-        if (! array_key_exists($documentType, self::REQUIRED_SHIPPING_DOCUMENTS)) {
+        if (! array_key_exists($documentType, $this->shippingDocumentLabels())) {
             abort(404);
-        }
-
-        if ($documentType === 'packing_list') {
-            throw ValidationException::withMessages([
-                'document_type' => 'Packing list must be generated from packing list entry.',
-            ]);
         }
 
         $validated = $request->validate([
@@ -331,7 +441,7 @@ class FollowUpController extends Controller
 
         if (! $this->shippingDocumentsComplete($followUpItem)) {
             throw ValidationException::withMessages([
-                'shipping_documents' => 'All required shipping documents must be uploaded or generated before moving to logistics.',
+                'shipping_documents' => 'Required shipping documents must be uploaded before moving to logistics.',
             ]);
         }
 
@@ -339,6 +449,7 @@ class FollowUpController extends Controller
 
         $this->logFollowUpAudit($followUpItem, $request, 'shipping', 'shipping_documents.completed', 'Shipping documents completed.', [
             'required_documents' => array_keys(self::REQUIRED_SHIPPING_DOCUMENTS),
+            'optional_documents' => array_keys(self::OPTIONAL_SHIPPING_DOCUMENTS),
         ]);
 
         return response()->json([
@@ -347,97 +458,13 @@ class FollowUpController extends Controller
         ]);
     }
 
-    public function storePackingList(Request $request, FollowUpItem $followUpItem, PackingListDocumentService $documents): JsonResponse
+    public function storePackingList(Request $request, FollowUpItem $followUpItem): JsonResponse
     {
         $this->authorizeFollowUpItem($request, $followUpItem);
 
-        $validated = $request->validate([
-            'package_size' => ['required', 'string', 'max:150'],
-            'gross_weight' => ['required', 'string', 'max:100'],
-            'net_weight' => ['required', 'string', 'max:100'],
-            'remarks' => ['nullable', 'string'],
+        throw ValidationException::withMessages([
+            'packing_list' => 'Upload the carrier packing list from Shipping Documents instead of generating one.',
         ]);
-
-        $followUpItem->loadMissing([
-            'supplierPoLine',
-            'quotationItem',
-            'buyerPo',
-            'quotation.buyerCompany',
-        ]);
-        $line = $followUpItem->supplierPoLine;
-
-        if (! $line) {
-            throw ValidationException::withMessages([
-                'packing_list' => 'This follow-up item is not linked to an active supplier PO line.',
-            ]);
-        }
-
-        $packingList = PackingList::query()->firstOrNew(['follow_up_item_id' => $followUpItem->id]);
-        $wasRecentlyCreated = ! $packingList->exists;
-        $packingList->fill([
-            'packing_list_reference' => $packingList->packing_list_reference ?: $this->packingListReferenceFor($followUpItem),
-            'packing_list_date' => now()->toDateString(),
-            'package_size' => $validated['package_size'],
-            'gross_weight' => $validated['gross_weight'],
-            'net_weight' => $validated['net_weight'],
-            'remarks' => $validated['remarks'] ?? null,
-            'created_by' => $request->user()->id,
-        ])->save();
-
-        $description = $followUpItem->quotationItem?->buyer_description ?: $line->item_description;
-        $packingList->items()->delete();
-        $packingList->items()->create([
-            'quotation_item_id' => $followUpItem->quotation_item_id,
-            'buyer_po_id' => $followUpItem->buyer_po_id,
-            'line_number' => 10,
-            'item_description' => $description,
-            'quantity' => $line->quantity,
-            'uom' => $line->uom,
-            'package_size' => $validated['package_size'],
-            'gross_weight' => $validated['gross_weight'],
-            'net_weight' => $validated['net_weight'],
-        ]);
-
-        $safeReference = Str::slug($packingList->packing_list_reference, '-');
-        $basePath = "generated/packing-lists/{$packingList->id}";
-        $docxPath = "{$basePath}/{$safeReference}.docx";
-        $pdfPath = "{$basePath}/{$safeReference}.pdf";
-        $packingList->forceFill([
-            'docx_path' => $docxPath,
-            'pdf_path' => $pdfPath,
-        ])->save();
-
-        $snapshot = $documents->snapshot($packingList);
-        $documents->writeDocx($snapshot, $docxPath);
-        $documents->writePdf($snapshot, $pdfPath);
-
-        $this->ensureShippingDocuments($followUpItem);
-        ShippingDocument::query()
-            ->where('follow_up_item_id', $followUpItem->id)
-            ->where('document_type', 'packing_list')
-            ->firstOrFail()
-            ->forceFill([
-                'status' => 'generated',
-                'document_number' => $packingList->packing_list_reference,
-                'document_date' => $packingList->packing_list_date,
-                'file_path' => $docxPath,
-                'original_file_name' => "{$safeReference}.docx",
-                'uploaded_by' => $request->user()->id,
-                'uploaded_at' => now(),
-            ])->save();
-
-        $this->logFollowUpAudit($followUpItem, $request, 'shipping', 'packing_list.generated', 'Packing List generated.', [
-            'packing_list_id' => $packingList->id,
-            'packing_list_reference' => $packingList->packing_list_reference,
-            'package_size' => $packingList->package_size,
-            'gross_weight' => $packingList->gross_weight,
-            'net_weight' => $packingList->net_weight,
-        ]);
-
-        return response()->json([
-            'message' => 'Packing list generated.',
-            'data' => $this->transformPackingList($packingList->refresh()->load(['items.buyerPo', 'creator'])),
-        ], $wasRecentlyCreated ? 201 : 200);
     }
 
     public function downloadPackingList(Request $request, PackingList $packingList, string $format, PackingListDocumentService $documents): BinaryFileResponse
@@ -590,25 +617,34 @@ class FollowUpController extends Controller
         ]);
 
         $arrivedAt = Carbon::parse($validated['arrived_at']);
+        $isSupplierResponsibility = $case->delivery_responsibility === 'supplier';
+        $caseStatus = $isSupplierResponsibility ? 'supplier_received' : 'arrived';
+        $eventType = $isSupplierResponsibility ? 'supplier_received' : 'arrived';
+        $eventTitle = $isSupplierResponsibility ? 'Supplier confirmed receipt' : 'Shipment arrived';
+        $followUpStatus = $isSupplierResponsibility ? 'ready_for_invoice' : 'arrived';
+        $auditAction = $isSupplierResponsibility ? 'delivery.supplier_received' : 'logistics.arrived';
+        $auditSummary = $isSupplierResponsibility ? 'Supplier confirmed receipt.' : 'Shipment arrived.';
+
         $case->forceFill([
-            'status' => 'arrived',
+            'status' => $caseStatus,
             'arrived_at' => $arrivedAt,
             'remarks' => $validated['remarks'] ?? $case->remarks,
         ])->save();
 
-        $this->appendLogisticsEvent($case, $request, 'arrived', 'Shipment arrived', $validated['remarks'] ?? null, [
+        $this->appendLogisticsEvent($case, $request, $eventType, $eventTitle, $validated['remarks'] ?? null, [
             'arrived_at' => $arrivedAt->toDateTimeString(),
         ], $arrivedAt);
 
-        $followUpItem->forceFill(['status' => 'arrived'])->save();
+        $followUpItem->forceFill(['status' => $followUpStatus])->save();
 
-        $this->logFollowUpAudit($followUpItem, $request, 'delivery', 'logistics.arrived', 'Shipment arrived.', [
+        $this->logFollowUpAudit($followUpItem, $request, 'delivery', $auditAction, $auditSummary, [
             'arrived_at' => $arrivedAt->toDateTimeString(),
+            'delivery_responsibility' => $case->delivery_responsibility,
             'remarks' => $validated['remarks'] ?? null,
         ]);
 
         return response()->json([
-            'message' => 'Shipment arrival recorded.',
+            'message' => $isSupplierResponsibility ? 'Supplier receipt recorded.' : 'Shipment arrival recorded.',
             'data' => $this->transformStoredFollowUpItem($request, $followUpItem),
         ]);
     }
@@ -845,7 +881,7 @@ class FollowUpController extends Controller
 
         $validated = $request->validate([
             'payment_term_days' => ['required', 'integer', 'min:0', 'max:3650'],
-            'vat_rate' => ['required', 'numeric', 'min:0', 'max:100'],
+            'vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'vat_amount' => ['nullable', 'numeric', 'min:0'],
             'vat_exception_reason' => ['nullable', 'string'],
             'bank_details' => ['nullable', 'string'],
@@ -862,7 +898,7 @@ class FollowUpController extends Controller
         }
 
         $subtotal = round((float) $quotationItem->total_price, 3);
-        $vatRate = round((float) $validated['vat_rate'], 3);
+        $vatRate = round((float) ($quotationItem->vat_rate ?? 0), 3);
         $vatAmount = array_key_exists('vat_amount', $validated) && $validated['vat_amount'] !== null
             ? round((float) $validated['vat_amount'], 3)
             : round($subtotal * ($vatRate / 100), 3);
@@ -1184,7 +1220,7 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param array{group_by: string, search: string, action: string, stage: string} $filters
+     * @param  array{group_by: string, search: string, action: string, stage: string}  $filters
      */
     private function applyFollowUpFilters(Builder $query, array $filters): Builder
     {
@@ -1285,8 +1321,8 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param \Illuminate\Support\Collection<int, FollowUpItem> $items
-     * @param \Illuminate\Support\Collection<int, array<string, mixed>> $transformedItems
+     * @param  Collection<int, FollowUpItem>  $items
+     * @param  Collection<int, array<string, mixed>>  $transformedItems
      * @return array<int, array<string, mixed>>
      */
     private function groupsFor($items, $transformedItems, string $groupBy): array
@@ -1341,7 +1377,7 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array{key: string, label: string, sort: int|string}
      */
     private function groupDescriptorFor(FollowUpItem $item, array $data, string $groupBy): array
@@ -1482,6 +1518,192 @@ class FollowUpController extends Controller
     }
 
     /**
+     * @param  Collection<int, FollowUpItem>  $items
+     * @return array<string, mixed>
+     */
+    private function transformQuotationSummary(Collection $items): array
+    {
+        /** @var FollowUpItem $first */
+        $first = $items->first();
+        $groups = $this->quotationGroupsFor($items, false);
+
+        return [
+            'quotation_id' => $first->quotation_id,
+            'quotation_reference' => $first->quotation?->quotation_reference,
+            'buyer_company_name' => $first->quotation?->buyerCompany?->name,
+            'buyer_contact_name' => $first->quotation?->buyerContact?->name,
+            'buyer_po_numbers' => $items->pluck('buyerPo.po_number')->filter()->unique()->values()->all(),
+            'supplier_po_references' => $items->pluck('supplierPo.po_reference')->filter()->unique()->values()->all(),
+            'manufacturers' => $items->map(fn (FollowUpItem $item): ?string => $item->supplierPoLine?->manufacturer?->name ?? $item->quotationItem?->manufacturer?->name)->filter()->unique()->values()->all(),
+            'follow_up_items_count' => $items->count(),
+            'open_groups_count' => $groups->count(),
+            'ready_for_invoice_count' => $items->where('status', 'ready_for_invoice')->count(),
+            'invoiced_count' => $items->filter(fn (FollowUpItem $item): bool => (bool) $item->invoice)->count(),
+            'oldest_next_follow_up_at' => $items->pluck('next_follow_up_at')->filter()->sort()->first()?->toDateTimeString(),
+            'latest_follow_up_item_id' => (int) $items->max('id'),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transformQuotationWorkspace(Request $request, Quotation $quotation): array
+    {
+        $quotation->load([
+            'buyerCompany',
+            'buyerContact',
+            'supplierCompany',
+            'supplierContact',
+            'salesperson',
+            'incoterm',
+            'terms',
+            'buyerPos',
+        ]);
+
+        $items = $this->visibleItemsQuery($request)
+            ->where('quotation_id', $quotation->id)
+            ->with($this->itemRelations($this->canViewFullTimeline($request)))
+            ->orderBy('quotation_item_id')
+            ->get();
+
+        if ($items->isEmpty()) {
+            abort(404);
+        }
+
+        $transformedItems = $items
+            ->map(fn (FollowUpItem $item): array => $this->transformFollowUpItem($item, $this->canViewFullTimeline($request)))
+            ->values();
+
+        return [
+            'quotation' => $this->transformQuotationHeader($quotation),
+            'buyer_pos' => $quotation->buyerPos->map(fn ($buyerPo): array => [
+                'id' => $buyerPo->id,
+                'po_number' => $buyerPo->po_number,
+                'po_date' => $buyerPo->po_date?->toDateString(),
+                'po_value' => $this->money($buyerPo->po_value),
+                'currency' => $buyerPo->currency,
+                'status' => $buyerPo->status,
+            ])->values(),
+            'supplier_pos' => $items
+                ->map(fn (FollowUpItem $item): ?array => $item->supplierPo ? [
+                    'id' => $item->supplierPo->id,
+                    'po_reference' => $item->supplierPo->po_reference,
+                    'supplier_company_name' => $item->supplierPo->supplierCompany?->name,
+                ] : null)
+                ->filter()
+                ->unique('id')
+                ->values(),
+            'terms' => $quotation->terms->map(fn ($term): array => [
+                'id' => $term->id,
+                'key' => $term->key,
+                'title' => $term->title,
+                'description' => $term->description,
+            ])->values(),
+            'items' => $transformedItems,
+            'groups' => $this->quotationGroupsFor($items, true)->values(),
+            'invoice_scope' => $this->invoiceScopeFor($items),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transformQuotationHeader(Quotation $quotation): array
+    {
+        return [
+            'id' => $quotation->id,
+            'quotation_reference' => $quotation->quotation_reference,
+            'buyer_company_name' => $quotation->buyerCompany?->name,
+            'buyer_contact_name' => $quotation->buyerContact?->name,
+            'supplier_company_name' => $quotation->supplierCompany?->name,
+            'supplier_contact_name' => $quotation->supplierContact?->name,
+            'salesperson_name' => $quotation->salesperson?->name,
+            'rfq_number' => $quotation->rfq_number,
+            'pr_number' => $quotation->pr_number,
+            'closing_at' => $quotation->closing_at?->toDateTimeString(),
+            'payment_term_days' => $quotation->payment_term_days,
+            'delivery_period_min' => $quotation->delivery_period_min,
+            'delivery_period_max' => $quotation->delivery_period_max,
+            'delivery_period_unit' => $quotation->delivery_period_unit,
+            'delivery_period_type' => $quotation->delivery_period_type,
+            'accepted_invoice_currency' => $quotation->accepted_invoice_currency,
+            'incoterm_code' => $quotation->incoterm?->code,
+            'incoterm_name' => $quotation->incoterm?->name,
+            'delivery_responsibility' => $quotation->delivery_responsibility,
+            'status' => $quotation->status,
+        ];
+    }
+
+    /**
+     * @param  Collection<int, FollowUpItem>  $items
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function quotationGroupsFor(Collection $items, bool $includeItems): Collection
+    {
+        return $items
+            ->groupBy(fn (FollowUpItem $item): string => $item->follow_up_group_key ?: 'item-'.$item->id)
+            ->map(function (Collection $groupItems, string $groupKey) use ($includeItems): array {
+                /** @var FollowUpItem $first */
+                $first = $groupItems->first();
+                $isPersistedGroup = filled($first->follow_up_group_key);
+                $name = $isPersistedGroup
+                    ? $first->follow_up_group_name
+                    : ($first->supplierPoLine?->title ?? $first->quotationItem?->title ?? 'Individual item');
+
+                return [
+                    'group_key' => $groupKey,
+                    'group_name' => $name,
+                    'workflow_mode' => $first->follow_up_group_mode ?: 'individual',
+                    'is_persisted_group' => $isPersistedGroup,
+                    'item_count' => $groupItems->count(),
+                    'status_labels' => $groupItems->map(fn (FollowUpItem $item): string => $this->statusLabel($item->status))->unique()->values()->all(),
+                    'stage_labels' => $groupItems->map(fn (FollowUpItem $item): string => self::COMMENT_STAGES[$this->workflowStageFor($item)])->unique()->values()->all(),
+                    'manufacturer_names' => $groupItems->map(fn (FollowUpItem $item): ?string => $item->supplierPoLine?->manufacturer?->name ?? $item->quotationItem?->manufacturer?->name)->filter()->unique()->values()->all(),
+                    'supplier_po_references' => $groupItems->pluck('supplierPo.po_reference')->filter()->unique()->values()->all(),
+                    'next_follow_up_at' => $groupItems->pluck('next_follow_up_at')->filter()->sort()->first()?->toDateTimeString(),
+                    'items' => $includeItems
+                        ? $groupItems->map(fn (FollowUpItem $item): array => [
+                            'id' => $item->id,
+                            'quotation_item_id' => $item->quotation_item_id,
+                            'title' => $item->supplierPoLine?->title ?? $item->quotationItem?->title,
+                            'manufacturer_name' => $item->supplierPoLine?->manufacturer?->name ?? $item->quotationItem?->manufacturer?->name,
+                            'status' => $item->status,
+                            'status_label' => $this->statusLabel($item->status),
+                            'current_stage_label' => self::COMMENT_STAGES[$this->workflowStageFor($item)],
+                            'supplier_po_reference' => $item->supplierPo?->po_reference,
+                        ])->values()
+                        : [],
+                ];
+            })
+            ->sortBy([
+                ['is_persisted_group', 'desc'],
+                ['group_name', 'asc'],
+            ])
+            ->values();
+    }
+
+    /**
+     * @param  Collection<int, FollowUpItem>  $items
+     * @return array<string, mixed>
+     */
+    private function invoiceScopeFor(Collection $items): array
+    {
+        $readyStatuses = ['ready_for_invoice', 'invoice_created', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'];
+
+        return [
+            'quotation_total_items' => $items->count(),
+            'ready_for_invoice_items' => $items->filter(fn (FollowUpItem $item): bool => in_array($item->status, $readyStatuses, true))->count(),
+            'invoiced_items' => $items->filter(fn (FollowUpItem $item): bool => (bool) $item->invoice)->count(),
+            'open_invoice_groups' => $items
+                ->filter(fn (FollowUpItem $item): bool => in_array($item->status, $readyStatuses, true) && ! $item->invoice)
+                ->groupBy(fn (FollowUpItem $item): string => $item->follow_up_group_key ?: 'item-'.$item->id)
+                ->count(),
+            'supports_partial_invoices' => true,
+            'supports_full_quotation_invoice' => true,
+        ];
+    }
+
+    /**
      * @return array<string, int>
      */
     private function summaryFor(Builder $query): array
@@ -1541,7 +1763,7 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $validated
+     * @param  array<string, mixed>  $validated
      */
     private function nextFollowUpAt(array $validated): Carbon
     {
@@ -1611,9 +1833,13 @@ class FollowUpController extends Controller
             'supplier_po_reference' => $item->supplierPo?->po_reference,
             'quotation_id' => $item->quotation_id,
             'quotation_reference' => $item->quotation?->quotation_reference,
+            'quotation_delivery_responsibility' => $item->quotation?->delivery_responsibility,
             'buyer_po_id' => $item->buyer_po_id,
             'buyer_po_number' => $item->buyerPo?->po_number,
             'buyer_po_date' => $item->buyerPo?->po_date?->toDateString(),
+            'follow_up_group_key' => $item->follow_up_group_key,
+            'follow_up_group_name' => $item->follow_up_group_name,
+            'follow_up_group_mode' => $item->follow_up_group_mode ?: 'individual',
             'buyer_company_name' => $item->quotation?->buyerCompany?->name,
             'buyer_contact_name' => $item->quotation?->buyerContact?->name,
             'supplier_company_name' => $item->supplierPo?->supplierCompany?->name,
@@ -1630,6 +1856,7 @@ class FollowUpController extends Controller
             'description' => $line?->item_description ?? $item->quotationItem?->manufacturer_description ?? $item->quotationItem?->buyer_description,
             'quantity' => $line ? $this->money($line->quantity) : $this->money($item->quotationItem?->quantity),
             'uom' => $line?->uom ?? $item->quotationItem?->uom,
+            'quotation_item_vat_rate' => $this->money($item->quotationItem?->vat_rate),
             'manufacturer_name' => $line?->manufacturer?->name ?? $item->quotationItem?->manufacturer?->name,
             'reminder_interval_value' => $item->reminder_interval_value,
             'reminder_interval_unit' => $item->reminder_interval_unit,
@@ -1808,7 +2035,7 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $properties
+     * @param  array<string, mixed>  $properties
      */
     private function logFollowUpAudit(FollowUpItem $followUpItem, Request $request, string $stage, string $action, string $summary, array $properties = []): void
     {
@@ -1830,7 +2057,7 @@ class FollowUpController extends Controller
 
     private function ensureShippingDocuments(FollowUpItem $followUpItem): void
     {
-        foreach (self::REQUIRED_SHIPPING_DOCUMENTS as $documentType => $label) {
+        foreach ($this->shippingDocumentLabels() as $documentType => $label) {
             ShippingDocument::query()->firstOrCreate([
                 'follow_up_item_id' => $followUpItem->id,
                 'document_type' => $documentType,
@@ -1849,7 +2076,7 @@ class FollowUpController extends Controller
 
         $documents = $followUpItem->shippingDocuments;
 
-        return collect(array_keys(self::REQUIRED_SHIPPING_DOCUMENTS))
+        return collect(array_keys($this->shippingDocumentLabels()))
             ->map(fn (string $documentType) => $documents->firstWhere('document_type', $documentType))
             ->filter()
             ->values();
@@ -1861,6 +2088,7 @@ class FollowUpController extends Controller
         $completeStatuses = ['uploaded', 'approved', 'generated', 'waived'];
 
         return $this->shippingDocumentsFor($followUpItem)
+            ->filter(fn (ShippingDocument $document): bool => $this->shippingDocumentIsRequired($document->document_type))
             ->every(fn (ShippingDocument $document): bool => in_array($document->status, $completeStatuses, true));
     }
 
@@ -1871,8 +2099,21 @@ class FollowUpController extends Controller
         }
 
         throw ValidationException::withMessages([
-            'shipping_documents' => 'All required shipping documents must be completed before ETA and logistics tracking can start.',
+            'shipping_documents' => 'Required shipping documents must be uploaded before ETA and logistics tracking can start.',
         ]);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function shippingDocumentLabels(): array
+    {
+        return self::REQUIRED_SHIPPING_DOCUMENTS + self::OPTIONAL_SHIPPING_DOCUMENTS;
+    }
+
+    private function shippingDocumentIsRequired(string $documentType): bool
+    {
+        return array_key_exists($documentType, self::REQUIRED_SHIPPING_DOCUMENTS);
     }
 
     private function logisticsCaseOrFail(FollowUpItem $followUpItem): LogisticsCase
@@ -1965,7 +2206,7 @@ class FollowUpController extends Controller
     }
 
     /**
-     * @param array<string, mixed>|null $metadata
+     * @param  array<string, mixed>|null  $metadata
      */
     private function appendLogisticsEvent(LogisticsCase $case, Request $request, string $eventType, string $title, ?string $notes = null, ?array $metadata = null, ?Carbon $eventAt = null): LogisticsEvent
     {
@@ -1989,6 +2230,7 @@ class FollowUpController extends Controller
             'id' => $document->id,
             'document_type' => $document->document_type,
             'label' => $document->label,
+            'is_required' => $this->shippingDocumentIsRequired($document->document_type),
             'status' => $document->status,
             'document_number' => $document->document_number,
             'document_date' => $document->document_date?->toDateString(),

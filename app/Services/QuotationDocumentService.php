@@ -34,6 +34,7 @@ class QuotationDocumentService
         ]);
 
         $subtotal = $quotation->items->sum(fn (QuotationItem $item): float => (float) $item->total_price);
+        $vatTotal = $quotation->items->sum(fn (QuotationItem $item): float => (float) $item->total_price * ((float) $item->vat_rate / 100));
 
         return [
             'quotation' => [
@@ -63,7 +64,10 @@ class QuotationDocumentService
                 'quantity' => $this->money($item->quantity),
                 'uom' => $item->uom,
                 'unit_price' => $this->money($item->unit_price),
+                'vat_rate' => $this->money($item->vat_rate),
+                'vat_amount' => $this->money((float) $item->total_price * ((float) $item->vat_rate / 100)),
                 'total_price' => $this->money($item->total_price),
+                'total_with_vat' => $this->money((float) $item->total_price + ((float) $item->total_price * ((float) $item->vat_rate / 100))),
             ])->values()->all(),
             'terms' => $quotation->terms->map(fn (QuotationTerm $term): array => [
                 'line_number' => $term->line_number,
@@ -74,6 +78,8 @@ class QuotationDocumentService
             ])->values()->all(),
             'totals' => [
                 'subtotal' => $this->money($subtotal),
+                'vat' => $this->money($vatTotal),
+                'grand_total' => $this->money($subtotal + $vatTotal),
             ],
         ];
     }
@@ -135,15 +141,15 @@ class QuotationDocumentService
 
         $itemsTable = $section->addTable('ItemsTable');
         $itemsTable->addRow();
-        foreach (['SL No', 'Description', 'QTY', 'Unit Price', 'Total excl. VAT'] as $heading) {
-            $itemsTable->addCell($heading === 'Description' ? 5000 : 1100, ['bgColor' => '1F4E79', 'valign' => 'center'])
+        foreach (['SL No', 'Description', 'QTY', 'Unit Price', 'VAT %', 'Total excl. VAT'] as $heading) {
+            $itemsTable->addCell($heading === 'Description' ? 4600 : 1000, ['bgColor' => '1F4E79', 'valign' => 'center'])
                 ->addText($heading, ['bold' => true, 'color' => 'FFFFFF'], ['alignment' => Jc::CENTER]);
         }
 
         foreach ($snapshot['items'] as $item) {
             $itemsTable->addRow();
             $itemsTable->addCell(800)->addText((string) $item['line_number'], [], ['alignment' => Jc::CENTER]);
-            $descriptionCell = $itemsTable->addCell(5000);
+            $descriptionCell = $itemsTable->addCell(4600);
             $descriptionCell->addText(trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']), ['bold' => true]);
             foreach (explode("\n", (string) $item['description']) as $line) {
                 if (trim($line) !== '') {
@@ -152,12 +158,19 @@ class QuotationDocumentService
             }
             $itemsTable->addCell(1100)->addText($item['quantity'].' '.$item['uom'], [], ['alignment' => Jc::CENTER]);
             $itemsTable->addCell(1200)->addText($item['unit_price'], [], ['alignment' => Jc::RIGHT]);
+            $itemsTable->addCell(900)->addText($item['vat_rate'] ?? '0.000', [], ['alignment' => Jc::RIGHT]);
             $itemsTable->addCell(1300)->addText($item['total_price'], [], ['alignment' => Jc::RIGHT]);
         }
 
         $itemsTable->addRow();
-        $itemsTable->addCell(800, ['gridSpan' => 4])->addText('Total Net Amount '.$snapshot['quotation']['currency'].' (Excluding VAT):', ['bold' => true], ['alignment' => Jc::RIGHT]);
+        $itemsTable->addCell(800, ['gridSpan' => 5])->addText('Total Net Amount '.$snapshot['quotation']['currency'].' (Excluding VAT):', ['bold' => true], ['alignment' => Jc::RIGHT]);
         $itemsTable->addCell(1300)->addText($snapshot['totals']['subtotal'], ['bold' => true], ['alignment' => Jc::RIGHT]);
+        $itemsTable->addRow();
+        $itemsTable->addCell(800, ['gridSpan' => 5])->addText('VAT Amount '.$snapshot['quotation']['currency'].':', ['bold' => true], ['alignment' => Jc::RIGHT]);
+        $itemsTable->addCell(1300)->addText($snapshot['totals']['vat'] ?? '0.000', ['bold' => true], ['alignment' => Jc::RIGHT]);
+        $itemsTable->addRow();
+        $itemsTable->addCell(800, ['gridSpan' => 5])->addText('Total Amount '.$snapshot['quotation']['currency'].' (Including VAT):', ['bold' => true], ['alignment' => Jc::RIGHT]);
+        $itemsTable->addCell(1300)->addText($snapshot['totals']['grand_total'] ?? $snapshot['totals']['subtotal'], ['bold' => true], ['alignment' => Jc::RIGHT]);
 
         $section->addTextBreak(1);
         $section->addText('Terms & Conditions:', ['bold' => true, 'size' => 11, 'color' => '1F4E79']);

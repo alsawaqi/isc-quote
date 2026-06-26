@@ -56,16 +56,33 @@ class AppRoutingTest extends TestCase
 
         $this->assertStringContainsString("const FollowUpDashboardView = () => import('./components/FollowUpDashboardView.vue');", $router);
         $this->assertStringContainsString("const FollowUpGroupView = () => import('./components/FollowUpGroupView.vue');", $router);
+        $this->assertStringContainsString("const FollowUpQuotationView = () => import('./components/FollowUpQuotationView.vue');", $router);
         $this->assertStringContainsString("const FollowUpVisualizationView = () => import('./components/FollowUpVisualizationView.vue');", $router);
         $this->assertStringContainsString("const FollowUpDetailView = () => import('./components/FollowUpDetailView.vue');", $router);
         $this->assertStringContainsString("path: '/follow-up'", $router);
         $this->assertStringContainsString("path: '/follow-up/groups'", $router);
+        $this->assertStringContainsString("path: '/follow-up/quotations'", $router);
+        $this->assertStringContainsString("path: '/follow-up/quotations/:id'", $router);
         $this->assertStringContainsString("path: '/follow-up/visualization'", $router);
         $this->assertStringContainsString("path: '/follow-up/:id'", $router);
         $this->assertStringContainsString("roles: ['admin', 'follow-up']", $router);
         $this->assertStringContainsString("path: '/follow-up'", $navigation);
         $this->assertStringContainsString("path: '/follow-up/groups'", $navigation);
+        $this->assertStringContainsString("path: '/follow-up/quotations'", $navigation);
         $this->assertStringContainsString("path: '/follow-up/visualization'", $navigation);
+    }
+
+    public function test_follow_up_quotation_workspace_supports_item_grouping(): void
+    {
+        $quotationWorkspace = file_get_contents(resource_path('js/components/FollowUpQuotationView.vue'));
+
+        $this->assertStringContainsString('/api/follow-up/quotations', $quotationWorkspace);
+        $this->assertStringContainsString('selectedFollowUpItemIds', $quotationWorkspace);
+        $this->assertStringContainsString('createFollowUpGroup', $quotationWorkspace);
+        $this->assertStringContainsString('splitFollowUpGroup', $quotationWorkspace);
+        $this->assertStringContainsString('Quotation Details', $quotationWorkspace);
+        $this->assertStringContainsString('Workflow Groups', $quotationWorkspace);
+        $this->assertStringContainsString('Invoice Scope', $quotationWorkspace);
     }
 
     public function test_follow_up_detail_uses_a_step_by_step_workflow_instead_of_showing_all_panels(): void
@@ -80,6 +97,37 @@ class AppRoutingTest extends TestCase
         $this->assertStringContainsString("activeFollowUpStep === 'delivery'", $detail);
         $this->assertStringContainsString("activeFollowUpStep === 'invoice'", $detail);
         $this->assertStringContainsString("activeFollowUpStep === 'payment'", $detail);
+        $this->assertStringContainsString('is_required', $detail);
+        $this->assertStringContainsString('Upload Packing List', $detail);
+        $this->assertStringContainsString('Optional Transport Documents', $detail);
+        $this->assertStringNotContainsString('Generate Packing List', $detail);
+        $this->assertStringNotContainsString('savePackingList', $detail);
+    }
+
+    public function test_supplier_delivery_responsibility_is_wired_into_sales_and_follow_up_pages(): void
+    {
+        $quotationCreate = file_get_contents(resource_path('js/components/QuotationCreateView.vue'));
+        $followUpDetail = file_get_contents(resource_path('js/components/FollowUpDetailView.vue'));
+
+        $this->assertStringContainsString('Supplier / Manufacturer Responsibility', $quotationCreate);
+        $this->assertStringContainsString('quotation_delivery_responsibility', $followUpDetail);
+        $this->assertStringContainsString('defaultDeliveryResponsibility', $followUpDetail);
+        $this->assertStringContainsString('isSupplierHandledDelivery', $followUpDetail);
+        $this->assertStringContainsString('Supplier Receipt', $followUpDetail);
+    }
+
+    public function test_supplier_po_create_page_has_filter_controls_and_selection_cache(): void
+    {
+        $supplierPoCreate = file_get_contents(resource_path('js/components/SupplierPoCreateView.vue'));
+
+        $this->assertStringContainsString('pending_item_filters', $supplierPoCreate);
+        $this->assertStringContainsString('itemFilters', $supplierPoCreate);
+        $this->assertStringContainsString('selectedItemCache', $supplierPoCreate);
+        $this->assertStringContainsString('loadPendingItems', $supplierPoCreate);
+        $this->assertStringContainsString('Current quotations', $supplierPoCreate);
+        $this->assertStringContainsString('Quotation Number', $supplierPoCreate);
+        $this->assertStringContainsString('Customer', $supplierPoCreate);
+        $this->assertStringContainsString('Manufacturer', $supplierPoCreate);
     }
 
     public function test_follow_up_dashboard_highlights_due_reminders_before_the_general_list(): void
@@ -147,6 +195,10 @@ class AppRoutingTest extends TestCase
         $this->assertStringContainsString("label: 'Item Trace'", $navigation);
         $this->assertStringContainsString('/api/admin/trace/quotations', $quotationTrace);
         $this->assertStringContainsString('/api/admin/trace/items', $itemTrace);
+        $this->assertStringContainsString('downloadProtectedFile', $quotationTrace);
+        $this->assertStringContainsString('/api/admin/trace/quotations/export', $quotationTrace);
+        $this->assertStringContainsString('downloadProtectedFile', $itemTrace);
+        $this->assertStringContainsString('/api/admin/trace/items/export', $itemTrace);
         $this->assertStringContainsString('Buyer PO', $quotationTrace);
         $this->assertStringContainsString('Supplier PO', $itemTrace);
         $this->assertStringContainsString('Timeline', $quotationTrace);

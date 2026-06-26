@@ -85,6 +85,7 @@ interface QuotationItemForm {
     quantity: number;
     uom: string;
     unit_price: number;
+    vat_rate: number;
 }
 
 interface TermDefault {
@@ -122,6 +123,7 @@ interface ExistingQuotationItem {
     quantity: string;
     uom: string;
     unit_price: string;
+    vat_rate?: string;
 }
 
 interface ExistingQuotationTerm {
@@ -258,7 +260,9 @@ const canSaveItems = computed(() => {
                 hasRichTextContent(item.buyer_description) &&
                 item.quantity > 0 &&
                 item.uom.trim() &&
-                item.unit_price >= 0,
+                item.unit_price >= 0 &&
+                item.vat_rate >= 0 &&
+                item.vat_rate <= 100,
         ) &&
         !isSavingItems.value
     );
@@ -280,6 +284,12 @@ const quotationSubtotal = computed(() => {
     return items.value.reduce((total, item) => total + lineTotal(item), 0);
 });
 
+const quotationVatTotal = computed(() => {
+    return items.value.reduce((total, item) => total + lineVatAmount(item), 0);
+});
+
+const quotationGrandTotal = computed(() => quotationSubtotal.value + quotationVatTotal.value);
+
 const canFinalize = computed(() => Boolean(currentQuotation.value) && termsSaved.value && !isFinalizing.value);
 
 function showToast(type: Toast['type'], message: string): void {
@@ -296,11 +306,23 @@ function optionName(optionsList: SelectOption[], id: string): string {
 }
 
 function responsibilityLabel(value: string): string {
+    if (value === 'supplier') {
+        return 'Supplier / Manufacturer Responsibility';
+    }
+
     return options.value.delivery_responsibilities.find((item) => String(item.id) === value)?.name ?? value;
 }
 
 function lineTotal(item: QuotationItemForm): number {
     return Number(item.quantity || 0) * Number(item.unit_price || 0);
+}
+
+function lineVatAmount(item: QuotationItemForm): number {
+    return lineTotal(item) * (Number(item.vat_rate || 0) / 100);
+}
+
+function lineTotalWithVat(item: QuotationItemForm): number {
+    return lineTotal(item) + lineVatAmount(item);
 }
 
 function hasRichTextContent(value: string): boolean {
@@ -338,6 +360,7 @@ function addItem(): void {
         quantity: 1,
         uom: 'EA',
         unit_price: 0,
+        vat_rate: 0,
     });
 }
 
@@ -414,6 +437,7 @@ function populateExistingQuotation(detail: ExistingQuotationDetail): void {
         quantity: Number(item.quantity),
         uom: item.uom,
         unit_price: Number(item.unit_price),
+        vat_rate: Number(item.vat_rate ?? 0),
     }));
 
     const defaults = options.value.term_defaults.length > 0 ? options.value.term_defaults : fallbackTermDefaults;
@@ -533,6 +557,7 @@ async function submitItems(): Promise<void> {
                     quantity: Number(item.quantity),
                     uom: item.uom.trim(),
                     unit_price: Number(item.unit_price),
+                    vat_rate: Number(item.vat_rate),
                 })),
             }),
         });
@@ -784,7 +809,7 @@ onMounted(loadOptions);
                         <legend>Delivery Responsibility<b>*</b></legend>
                         <label v-for="item in options.delivery_responsibilities" :key="String(item.id)">
                             <input v-model="form.delivery_responsibility" type="radio" name="delivery_responsibility" :value="item.id" />
-                            <span>{{ item.name }}</span>
+                            <span>{{ responsibilityLabel(String(item.id)) }}</span>
                         </label>
                     </fieldset>
                 </div>
@@ -867,7 +892,7 @@ onMounted(loadOptions);
                 <span class="panel-mark">
                     <FileText :size="20" aria-hidden="true" />
                 </span>
-                <div>
+                <div class="quotation-total-stack">
                     <h2>Step 2</h2>
                     <p>{{ currentQuotation?.quotation_reference }} products, descriptions, quantities, and prices</p>
                 </div>
@@ -920,8 +945,12 @@ onMounted(loadOptions);
                             <span>Unit Price<b>*</b></span>
                             <input v-model.number="item.unit_price" type="number" min="0" step="0.001" required :aria-label="`Line ${index + 1} Unit Price`" />
                         </label>
+                        <label class="quote-field">
+                            <span>VAT %<b>*</b></span>
+                            <input v-model.number="item.vat_rate" type="number" min="0" max="100" step="0.001" required :aria-label="`Line ${index + 1} VAT percentage`" />
+                        </label>
                         <div class="quote-field total-field">
-                            <span>Total Price</span>
+                            <span>Total excl. VAT</span>
                             <strong>{{ money(lineTotal(item)) }}</strong>
                         </div>
                     </div>
@@ -941,8 +970,12 @@ onMounted(loadOptions);
 
             <footer class="items-footer">
                 <div>
-                    <span>Quotation Total</span>
+                    <span>Subtotal excl. VAT</span>
                     <strong>{{ form.accepted_invoice_currency }} {{ money(quotationSubtotal) }}</strong>
+                    <span>VAT</span>
+                    <strong>{{ form.accepted_invoice_currency }} {{ money(quotationVatTotal) }}</strong>
+                    <span>Total incl. VAT</span>
+                    <strong>{{ form.accepted_invoice_currency }} {{ money(quotationGrandTotal) }}</strong>
                 </div>
                 <button class="primary-action compact-action" type="button" :disabled="!canSaveItems" @click="submitItems">
                     <Loader2 v-if="isSavingItems" class="spin-icon" :size="17" aria-hidden="true" />
@@ -1095,13 +1128,13 @@ onMounted(loadOptions);
                     <div class="review-list">
                         <article v-for="(item, index) in items" :key="item.key">
                             <strong>{{ index + 1 }}. {{ item.title }}</strong>
-                            <span>{{ optionName(options.manufacturers, item.manufacturer_id) }} - {{ item.quantity }} {{ item.uom }} x {{ money(item.unit_price) }}</span>
-                            <b>{{ form.accepted_invoice_currency }} {{ money(lineTotal(item)) }}</b>
+                            <span>{{ optionName(options.manufacturers, item.manufacturer_id) }} - {{ item.quantity }} {{ item.uom }} x {{ money(item.unit_price) }} + {{ money(item.vat_rate) }}% VAT</span>
+                            <b>{{ form.accepted_invoice_currency }} {{ money(lineTotalWithVat(item)) }}</b>
                         </article>
                     </div>
                     <div class="review-total">
-                        <span>Total</span>
-                        <strong>{{ form.accepted_invoice_currency }} {{ money(quotationSubtotal) }}</strong>
+                        <span>Total incl. VAT</span>
+                        <strong>{{ form.accepted_invoice_currency }} {{ money(quotationGrandTotal) }}</strong>
                     </div>
                 </section>
 

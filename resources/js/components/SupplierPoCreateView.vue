@@ -9,7 +9,9 @@ import {
     FileText,
     Loader2,
     Plus,
+    RefreshCcw,
     Save,
+    Search,
     Truck,
     UserRound,
 } from 'lucide-vue-next';
@@ -48,13 +50,27 @@ interface BuyerDefault {
     contact_name: string;
 }
 
+interface PendingItemFilterOption {
+    value: string;
+    label: string;
+}
+
+interface PendingItemFilters {
+    buyers: PendingItemFilterOption[];
+    manufacturers: PendingItemFilterOption[];
+    quotations: PendingItemFilterOption[];
+}
+
 interface PendingItem {
     quotation_item_id: number;
     quotation_id: number;
     quotation_reference: string;
+    quotation_status: string | null;
+    quotation_closing_at: string | null;
     buyer_company_name: string;
     buyer_po_id: number;
     buyer_po_number: string;
+    buyer_po_date: string | null;
     manufacturer_id: number | null;
     manufacturer_name: string | null;
     product_name: string;
@@ -80,6 +96,7 @@ interface SupplierPoOptions {
     period_units: SelectOption[];
     delivery_types: SelectOption[];
     pending_items: PendingItem[];
+    pending_item_filters: PendingItemFilters;
     term_defaults: TermDefault[];
 }
 
@@ -168,16 +185,24 @@ const options = ref<SupplierPoOptions>({
     period_units: [],
     delivery_types: [],
     pending_items: [],
+    pending_item_filters: {
+        buyers: [],
+        manufacturers: [],
+        quotations: [],
+    },
     term_defaults: [],
 });
 const activeStep = ref<1 | 2 | 3 | 4>(1);
 const selectedLines = ref<SelectedLine[]>([]);
+const selectedItemCache = ref<Record<number, PendingItem>>({});
 const terms = ref<SupplierPoTermForm[]>([]);
 const createdSupplierPo = ref<SupplierPoRecord | null>(null);
 const isLoading = ref(false);
+const isLoadingItems = ref(false);
 const isCreating = ref(false);
 const isHydrating = ref(false);
 const toast = ref<Toast | null>(null);
+let itemSearchTimer: number | undefined;
 
 const form = reactive({
     supplier_id: '',
@@ -193,6 +218,15 @@ const form = reactive({
     additional_charges_label: 'COO Charges USD',
     additional_charges: 0,
 });
+const itemFilters = reactive({
+    current_only: true,
+    search: '',
+    quotation_reference: '',
+    buyer_id: 'all',
+    manufacturer_id: 'all',
+    buyer_po_date_from: '',
+    buyer_po_date_to: '',
+});
 
 const editId = computed(() => (route.params.id ? Number(route.params.id) : null));
 const isEditing = computed(() => Boolean(editId.value));
@@ -201,21 +235,13 @@ const filteredSupplierContacts = computed(() => {
     return options.value.supplier_contacts.filter((contact) => String(contact.company_id) === String(selectedSupplier.value?.company_id ?? ''));
 });
 const itemCandidates = computed(() => {
-    if (!selectedSupplier.value) {
-        return options.value.pending_items;
-    }
-
-    if (!selectedSupplier.value.manufacturer_id) {
-        return options.value.pending_items;
-    }
-
-    return options.value.pending_items.filter((item) => Number(item.manufacturer_id) === Number(selectedSupplier.value?.manufacturer_id));
+    return options.value.pending_items;
 });
 const selectedItems = computed(() => {
     return selectedLines.value
         .map((line) => ({
             line,
-            item: options.value.pending_items.find((candidate) => candidate.quotation_item_id === line.quotation_item_id) ?? null,
+            item: selectedItemCache.value[line.quotation_item_id] ?? options.value.pending_items.find((candidate) => candidate.quotation_item_id === line.quotation_item_id) ?? null,
         }))
         .filter((entry): entry is { line: SelectedLine; item: PendingItem } => Boolean(entry.item));
 });
@@ -258,11 +284,30 @@ function selectedLineFor(itemId: number): SelectedLine | null {
     return selectedLines.value.find((line) => line.quotation_item_id === itemId) ?? null;
 }
 
+function cacheSelectedItem(item: PendingItem): void {
+    selectedItemCache.value = {
+        ...selectedItemCache.value,
+        [item.quotation_item_id]: item,
+    };
+}
+
+function removeSelectedItem(itemId: number): void {
+    const existingIndex = selectedLines.value.findIndex((line) => line.quotation_item_id === itemId);
+
+    if (existingIndex >= 0) {
+        selectedLines.value.splice(existingIndex, 1);
+    }
+
+    const nextCache = { ...selectedItemCache.value };
+    delete nextCache[itemId];
+    selectedItemCache.value = nextCache;
+}
+
 function toggleItem(item: PendingItem): void {
     const existingIndex = selectedLines.value.findIndex((line) => line.quotation_item_id === item.quotation_item_id);
 
     if (existingIndex >= 0) {
-        selectedLines.value.splice(existingIndex, 1);
+        removeSelectedItem(item.quotation_item_id);
         return;
     }
 
@@ -270,6 +315,7 @@ function toggleItem(item: PendingItem): void {
         quotation_item_id: item.quotation_item_id,
         unit_cost: Number(item.quotation_unit_price),
     });
+    cacheSelectedItem(item);
 }
 
 function updateLineCost(itemId: number, value: string): void {
@@ -319,9 +365,12 @@ function supplierPoLineToPendingItem(line: SupplierPoLineRecord): PendingItem {
         quotation_item_id: line.quotation_item_id,
         quotation_id: line.quotation_id,
         quotation_reference: line.quotation_reference,
+        quotation_status: null,
+        quotation_closing_at: null,
         buyer_company_name: line.buyer_company_name ?? '-',
         buyer_po_id: line.buyer_po_id,
         buyer_po_number: line.buyer_po_number,
+        buyer_po_date: null,
         manufacturer_id: line.manufacturer_id,
         manufacturer_name: line.manufacturer_name,
         product_name: line.product_name,
@@ -351,6 +400,12 @@ function mergePendingItems(items: PendingItem[], lines: SupplierPoLineRecord[]):
 function applySupplierPo(supplierPo: SupplierPoRecord): void {
     isHydrating.value = true;
     options.value.pending_items = mergePendingItems(options.value.pending_items, supplierPo.lines);
+    selectedItemCache.value = supplierPo.lines.reduce<Record<number, PendingItem>>((cache, line) => {
+        const pendingItem = supplierPoLineToPendingItem(line);
+        cache[pendingItem.quotation_item_id] = pendingItem;
+
+        return cache;
+    }, {});
     form.supplier_id = String(supplierPo.supplier_id);
     form.supplier_contact_id = '';
     form.supplier_quote_reference = supplierPo.supplier_quote_reference ?? '';
@@ -380,11 +435,50 @@ function applySupplierPo(supplierPo: SupplierPoRecord): void {
     });
 }
 
+function pendingItemParams(): URLSearchParams {
+    const params = new URLSearchParams();
+
+    if (form.supplier_id) {
+        params.set('supplier_id', form.supplier_id);
+    }
+
+    if (itemFilters.current_only) {
+        params.set('current_only', '1');
+    }
+
+    if (itemFilters.search.trim()) {
+        params.set('search', itemFilters.search.trim());
+    }
+
+    if (itemFilters.quotation_reference.trim()) {
+        params.set('quotation_reference', itemFilters.quotation_reference.trim());
+    }
+
+    if (itemFilters.buyer_id !== 'all') {
+        params.set('buyer_id', itemFilters.buyer_id);
+    }
+
+    if (itemFilters.manufacturer_id !== 'all') {
+        params.set('manufacturer_id', itemFilters.manufacturer_id);
+    }
+
+    if (itemFilters.buyer_po_date_from) {
+        params.set('buyer_po_date_from', itemFilters.buyer_po_date_from);
+    }
+
+    if (itemFilters.buyer_po_date_to) {
+        params.set('buyer_po_date_to', itemFilters.buyer_po_date_to);
+    }
+
+    return params;
+}
+
 async function loadOptions(): Promise<void> {
     isLoading.value = true;
 
     try {
-        options.value = await requestJson<SupplierPoOptions>('/api/supplier-pos/create-options');
+        const params = pendingItemParams();
+        options.value = await requestJson<SupplierPoOptions>(`/api/supplier-pos/create-options${params.toString() ? `?${params.toString()}` : ''}`);
         initializeTerms(options.value.term_defaults.length > 0 ? options.value.term_defaults : fallbackTermDefaults);
 
         if (isEditing.value && editId.value) {
@@ -396,6 +490,43 @@ async function loadOptions(): Promise<void> {
     } finally {
         isLoading.value = false;
     }
+}
+
+async function loadPendingItems(): Promise<void> {
+    isLoadingItems.value = true;
+
+    try {
+        const params = pendingItemParams();
+        const payload = await requestJson<SupplierPoOptions>(`/api/supplier-pos/create-options${params.toString() ? `?${params.toString()}` : ''}`);
+        options.value = {
+            ...options.value,
+            buyer: payload.buyer,
+            suppliers: payload.suppliers,
+            supplier_contacts: payload.supplier_contacts,
+            incoterms: payload.incoterms,
+            currencies: payload.currencies,
+            period_units: payload.period_units,
+            delivery_types: payload.delivery_types,
+            pending_items: payload.pending_items,
+            pending_item_filters: payload.pending_item_filters,
+            term_defaults: payload.term_defaults,
+        };
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to load filtered items.');
+    } finally {
+        isLoadingItems.value = false;
+    }
+}
+
+function resetItemFilters(): void {
+    itemFilters.current_only = true;
+    itemFilters.search = '';
+    itemFilters.quotation_reference = '';
+    itemFilters.buyer_id = 'all';
+    itemFilters.manufacturer_id = 'all';
+    itemFilters.buyer_po_date_from = '';
+    itemFilters.buyer_po_date_to = '';
+    void loadPendingItems();
 }
 
 async function saveSupplierPo(): Promise<void> {
@@ -468,6 +599,38 @@ watch(
         const supplier = selectedSupplier.value;
         form.supplier_contact_id = supplier?.primary_contact_id ? String(supplier.primary_contact_id) : '';
         selectedLines.value = [];
+        selectedItemCache.value = {};
+        void loadPendingItems();
+    },
+);
+
+watch(
+    () => [
+        itemFilters.current_only,
+        itemFilters.quotation_reference,
+        itemFilters.buyer_id,
+        itemFilters.manufacturer_id,
+        itemFilters.buyer_po_date_from,
+        itemFilters.buyer_po_date_to,
+    ],
+    () => {
+        if (!isHydrating.value) {
+            void loadPendingItems();
+        }
+    },
+);
+
+watch(
+    () => itemFilters.search,
+    () => {
+        if (isHydrating.value) {
+            return;
+        }
+
+        window.clearTimeout(itemSearchTimer);
+        itemSearchTimer = window.setTimeout(() => {
+            void loadPendingItems();
+        }, 320);
     },
 );
 
@@ -658,6 +821,7 @@ onMounted(loadOptions);
                         <h2>Pending Items</h2>
                     </header>
                     <strong class="currency-preview">{{ itemCandidates.length }}</strong>
+                    <span class="preview-subtle">{{ selectedItems.length }} selected</span>
                 </section>
             </aside>
         </div>
@@ -673,33 +837,107 @@ onMounted(loadOptions);
                 </div>
             </header>
 
-            <div class="supplier-po-items">
-                <article v-for="item in itemCandidates" :key="item.quotation_item_id" class="supplier-po-item-card">
-                    <label>
-                        <input type="checkbox" :checked="Boolean(selectedLineFor(item.quotation_item_id))" @change="toggleItem(item)" />
-                        <span>
-                            <strong>{{ item.title }}</strong>
-                            <small>{{ item.buyer_company_name }} | Buyer PO {{ item.buyer_po_number }} | {{ item.quotation_reference }}</small>
-                        </span>
-                    </label>
+            <datalist id="supplier-po-quotation-filter-options">
+                <option v-for="option in options.pending_item_filters.quotations" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                </option>
+            </datalist>
 
+            <section class="supplier-po-filter-panel" aria-label="Supplier PO item filters">
+                <label class="supplier-po-current-toggle">
+                    <input v-model="itemFilters.current_only" type="checkbox" />
+                    <span>Current quotations</span>
+                </label>
+                <label class="follow-up-search-control supplier-po-filter-search">
+                    <span>Search</span>
+                    <span class="mini-search">
+                        <Search :size="16" aria-hidden="true" />
+                        <input v-model="itemFilters.search" type="search" placeholder="Item, quotation, customer, PO..." />
+                    </span>
+                </label>
+                <label class="quote-field">
+                    <span>Quotation Number</span>
+                    <input v-model.trim="itemFilters.quotation_reference" list="supplier-po-quotation-filter-options" type="search" placeholder="Quotation number" />
+                </label>
+                <label class="quote-field">
+                    <span>Customer</span>
+                    <select v-model="itemFilters.buyer_id">
+                        <option value="all">All customers</option>
+                        <option v-for="option in options.pending_item_filters.buyers" :key="option.value" :value="option.value">
+                            {{ option.label }}
+                        </option>
+                    </select>
+                </label>
+                <label class="quote-field">
+                    <span>Manufacturer</span>
+                    <select v-model="itemFilters.manufacturer_id">
+                        <option value="all">All manufacturers</option>
+                        <option v-for="option in options.pending_item_filters.manufacturers" :key="option.value" :value="option.value">
+                            {{ option.label }}
+                        </option>
+                    </select>
+                </label>
+                <label class="quote-field">
+                    <span>Date From</span>
+                    <input v-model="itemFilters.buyer_po_date_from" type="date" />
+                </label>
+                <label class="quote-field">
+                    <span>Date To</span>
+                    <input v-model="itemFilters.buyer_po_date_to" type="date" />
+                </label>
+                <button class="secondary-action compact-action" type="button" :disabled="isLoadingItems" @click="loadPendingItems">
+                    <RefreshCcw :class="{ 'spin-icon': isLoadingItems }" :size="16" aria-hidden="true" />
+                    Refresh
+                </button>
+                <button class="secondary-action compact-action" type="button" :disabled="isLoadingItems" @click="resetItemFilters">
+                    Reset
+                </button>
+            </section>
+
+            <div v-if="selectedItems.length" class="supplier-po-selection-strip">
+                <article v-for="entry in selectedItems" :key="entry.item.quotation_item_id">
                     <div>
-                        <span>{{ item.manufacturer_name ?? '-' }}</span>
-                        <b>{{ item.quantity }} {{ item.uom }}</b>
+                        <strong>{{ entry.item.title }}</strong>
+                        <span>{{ entry.item.buyer_company_name }} | {{ entry.item.quotation_reference }}</span>
                     </div>
-
-                    <label class="quote-field">
-                        <span>Unit Cost</span>
-                        <input
-                            :value="selectedLineFor(item.quotation_item_id)?.unit_cost ?? Number(item.quotation_unit_price)"
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            :disabled="!selectedLineFor(item.quotation_item_id)"
-                            @input="updateLineCostFromEvent(item.quotation_item_id, $event)"
-                        />
-                    </label>
+                    <button class="table-link-button" type="button" @click="removeSelectedItem(entry.item.quotation_item_id)">Remove</button>
                 </article>
+            </div>
+
+            <div class="supplier-po-items">
+                <div v-if="isLoadingItems" class="crud-empty">
+                    <Loader2 class="spin-icon" :size="20" aria-hidden="true" />
+                    Loading filtered items...
+                </div>
+                <div v-else-if="itemCandidates.length === 0" class="crud-empty">No pending items match these filters.</div>
+                <template v-else>
+                    <article v-for="item in itemCandidates" :key="item.quotation_item_id" class="supplier-po-item-card">
+                        <label>
+                            <input type="checkbox" :checked="Boolean(selectedLineFor(item.quotation_item_id))" @change="toggleItem(item)" />
+                            <span>
+                                <strong>{{ item.title }}</strong>
+                                <small>{{ item.buyer_company_name }} | Buyer PO {{ item.buyer_po_number }} | {{ item.quotation_reference }} | {{ item.buyer_po_date ?? '-' }}</small>
+                            </span>
+                        </label>
+
+                        <div>
+                            <span>{{ item.manufacturer_name ?? '-' }}</span>
+                            <b>{{ item.quantity }} {{ item.uom }}</b>
+                        </div>
+
+                        <label class="quote-field">
+                            <span>Unit Cost</span>
+                            <input
+                                :value="selectedLineFor(item.quotation_item_id)?.unit_cost ?? Number(item.quotation_unit_price)"
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                :disabled="!selectedLineFor(item.quotation_item_id)"
+                                @input="updateLineCostFromEvent(item.quotation_item_id, $event)"
+                            />
+                        </label>
+                    </article>
+                </template>
             </div>
 
             <footer class="items-footer">

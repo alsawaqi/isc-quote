@@ -39,6 +39,10 @@ Route::middleware('jwt.auth')->group(function (): void {
     Route::get('/supplier-pos/{supplierPo}/download/{format}', [SupplierPoController::class, 'download']);
 
     Route::get('/follow-up', [FollowUpController::class, 'index']);
+    Route::get('/follow-up/quotations', [FollowUpController::class, 'quotationIndex']);
+    Route::get('/follow-up/quotations/{quotation}', [FollowUpController::class, 'quotationShow']);
+    Route::post('/follow-up/quotations/{quotation}/groups', [FollowUpController::class, 'storeQuotationGroup']);
+    Route::delete('/follow-up/quotations/{quotation}/groups/{groupKey}', [FollowUpController::class, 'splitQuotationGroup']);
     Route::get('/follow-up/{followUpItem}', [FollowUpController::class, 'show']);
     Route::put('/follow-up/{followUpItem}/reminder', [FollowUpController::class, 'updateReminder']);
     Route::post('/follow-up/{followUpItem}/comments', [FollowUpController::class, 'storeComment']);
@@ -66,8 +70,10 @@ Route::middleware('jwt.auth')->group(function (): void {
 
     Route::prefix('admin')->group(function (): void {
         Route::get('/trace/quotations', [AdminTraceController::class, 'quotations']);
+        Route::get('/trace/quotations/export', [AdminTraceController::class, 'exportQuotations']);
         Route::get('/trace/quotations/{quotation}', [AdminTraceController::class, 'quotation']);
         Route::get('/trace/items', [AdminTraceController::class, 'items']);
+        Route::get('/trace/items/export', [AdminTraceController::class, 'exportItems']);
 
         Route::get('/master-data/options', [MasterDataController::class, 'options']);
         Route::get('/{resource}', [MasterDataController::class, 'index']);

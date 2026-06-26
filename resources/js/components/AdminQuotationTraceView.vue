@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Eye, Loader2, RefreshCcw, Search } from 'lucide-vue-next';
-import { requestJson } from '../auth';
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Download, Eye, Loader2, RefreshCcw, Search } from 'lucide-vue-next';
+import { downloadProtectedFile, requestJson } from '../auth';
 import { humanizeStatus } from '../utils/format';
 
 interface TraceOption {
@@ -144,6 +144,7 @@ const buyerId = ref('all');
 const supplierId = ref('all');
 const manufacturerId = ref('all');
 const isLoading = ref(false);
+const isExporting = ref(false);
 const toast = ref<Toast | null>(null);
 let searchTimer: number | undefined;
 
@@ -231,6 +232,23 @@ async function loadDetail(): Promise<void> {
     }
 }
 
+async function exportQuotations(): Promise<void> {
+    isExporting.value = true;
+
+    try {
+        const params = traceParams();
+        await downloadProtectedFile(
+            `/api/admin/trace/quotations/export${params.toString() ? `?${params.toString()}` : ''}`,
+            'quotation-trace.csv',
+        );
+        showToast('success', 'Quotation trace CSV downloaded.');
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to export quotation trace.');
+    } finally {
+        isExporting.value = false;
+    }
+}
+
 function loadCurrentMode(): void {
     if (isDetailMode.value) {
         loadDetail();
@@ -286,6 +304,11 @@ onMounted(loadCurrentMode);
                 <button v-if="isDetailMode" class="secondary-action icon-gap" type="button" @click="router.push('/admin/trace/quotations')">
                     <ArrowLeft :size="17" aria-hidden="true" />
                     Back
+                </button>
+                <button v-if="!isDetailMode" class="secondary-action icon-gap" type="button" :disabled="isExporting || isLoading" @click="exportQuotations">
+                    <Loader2 v-if="isExporting" class="spin-icon" :size="17" aria-hidden="true" />
+                    <Download v-else :size="17" aria-hidden="true" />
+                    Export CSV
                 </button>
                 <button class="secondary-action icon-gap" type="button" :disabled="isLoading" @click="loadCurrentMode">
                     <RefreshCcw :class="{ 'spin-icon': isLoading }" :size="17" aria-hidden="true" />

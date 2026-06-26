@@ -6,12 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Country;
+use App\Models\Currency;
 use App\Models\Designation;
 use App\Models\Incoterm;
 use App\Models\Manufacturer;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\Supplier;
+use App\Models\Uom;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -78,7 +80,7 @@ class MasterDataController extends Controller
         }
 
         $data = $this->validated($request, $resource);
-        $record = $this->persist($resource, new $config['model'](), $data);
+        $record = $this->persist($resource, new $config['model'], $data);
 
         return response()->json([
             'message' => "{$config['label']} created successfully.",
@@ -222,6 +224,20 @@ class MasterDataController extends Controller
                 'search' => ['code', 'name', 'description', 'status'],
                 'with' => [],
             ],
+            'uoms' => [
+                'model' => Uom::class,
+                'label' => 'UOM',
+                'order_by' => 'code',
+                'search' => ['code', 'name', 'status'],
+                'with' => [],
+            ],
+            'currencies' => [
+                'model' => Currency::class,
+                'label' => 'Currency',
+                'order_by' => 'code',
+                'search' => ['code', 'name', 'status'],
+                'with' => [],
+            ],
             'manufacturers' => [
                 'model' => Manufacturer::class,
                 'label' => 'Manufacturer',
@@ -309,6 +325,17 @@ class MasterDataController extends Controller
                 'reminder_days_before_delivery' => ['required', 'integer', 'min:0', 'max:365'],
                 'status' => $statusRule,
             ],
+            'uoms' => [
+                'code' => ['required', 'string', 'max:24', Rule::unique('uoms', 'code')->ignore($id)],
+                'name' => ['required', 'string', 'max:255'],
+                'status' => $statusRule,
+            ],
+            'currencies' => [
+                'code' => ['required', 'string', 'max:8', Rule::unique('currencies', 'code')->ignore($id)],
+                'name' => ['required', 'string', 'max:255'],
+                'exchange_rate' => ['required', 'numeric', 'min:0', 'max:999999999'],
+                'status' => $statusRule,
+            ],
             'manufacturers' => [
                 'country_id' => ['required', 'integer', 'exists:countries,id'],
                 'name' => [
@@ -383,6 +410,11 @@ class MasterDataController extends Controller
 
         if ($resource === 'contacts') {
             $data['is_primary'] = (bool) ($data['is_primary'] ?? false);
+        }
+
+        if (in_array($resource, ['uoms', 'currencies'], true)) {
+            $data['code'] = Str::upper(trim((string) $data['code']));
+            $data['name'] = trim((string) $data['name']);
         }
 
         if ($record instanceof User) {
@@ -507,7 +539,7 @@ class MasterDataController extends Controller
     private function saveSalespersonContact(User $user, array $salespersonContact, string $fallbackName, string $fallbackEmail): Contact
     {
         $company = $this->defaultSupplierCompany();
-        $contact = $user->contact ?: new Contact();
+        $contact = $user->contact ?: new Contact;
 
         $contact->fill([
             'company_id' => $company->id,
@@ -622,6 +654,23 @@ class MasterDataController extends Controller
                 'created_at' => $this->date($record),
                 'updated_at' => $this->date($record, 'updated_at'),
             ],
+            'uoms' => [
+                'id' => $record->id,
+                'code' => $record->code,
+                'name' => $record->name,
+                'status' => $record->status,
+                'created_at' => $this->date($record),
+                'updated_at' => $this->date($record, 'updated_at'),
+            ],
+            'currencies' => [
+                'id' => $record->id,
+                'code' => $record->code,
+                'name' => $record->name,
+                'exchange_rate' => $record->exchange_rate,
+                'status' => $record->status,
+                'created_at' => $this->date($record),
+                'updated_at' => $this->date($record, 'updated_at'),
+            ],
             'manufacturers' => [
                 'id' => $record->id,
                 'country_id' => $record->country_id,
@@ -703,6 +752,8 @@ class MasterDataController extends Controller
             'companies' => Company::query()->orderBy('name')->get(['id', 'name', 'company_code', 'company_type']),
             'contacts' => Contact::query()->orderBy('name')->get(['id', 'name', 'company_id']),
             'manufacturers' => Manufacturer::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'country_id']),
+            'uoms' => Uom::query()->orderBy('code')->get(['id', 'code', 'name', 'status']),
+            'currencies' => Currency::query()->orderBy('code')->get(['id', 'code', 'name', 'exchange_rate', 'status']),
             'roles' => Role::query()->orderBy('name')->get(['id', 'name', 'slug']),
             'permissions' => Permission::query()->orderBy('group')->orderBy('name')->get(['id', 'name', 'group']),
         ];

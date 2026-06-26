@@ -3478,6 +3478,26 @@ button:disabled {
     gap: 12px;
 }
 
+.shipping-document-subtitle {
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 4px;
+    margin-top: 4px;
+    padding-top: 14px;
+}
+
+.shipping-document-subtitle strong {
+    color: var(--teal-strong);
+    font-size: 0.92rem;
+}
+
+.shipping-document-subtitle span {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 800;
+    line-height: 1.35;
+}
+
 .shipping-document-row {
     align-items: end;
     background: var(--surface-soft);
@@ -3487,6 +3507,10 @@ button:disabled {
     gap: 12px;
     grid-template-columns: minmax(170px, 1fr) minmax(130px, 0.78fr) minmax(130px, 0.72fr) minmax(180px, 1fr) auto;
     padding: 12px;
+}
+
+.shipping-document-row.optional-document-row {
+    background: #ffffff;
 }
 
 .shipping-document-row > div:first-child {
@@ -3813,6 +3837,292 @@ button:disabled {
     margin: 2px 0 0;
 }
 
+.quotation-follow-up-row {
+    grid-template-columns:
+        minmax(132px, 0.82fr)
+        minmax(170px, 1.08fr)
+        minmax(150px, 0.9fr)
+        minmax(150px, 0.9fr)
+        70px
+        78px
+        88px
+        92px;
+    min-width: 1100px;
+}
+
+.quotation-follow-up-layout {
+    align-items: stretch;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+}
+
+.quotation-follow-up-details header svg {
+    color: var(--teal);
+    flex: 0 0 auto;
+}
+
+.quotation-follow-up-dl {
+    display: grid;
+    gap: 10px 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+}
+
+.quotation-follow-up-dl div {
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 11px 12px;
+}
+
+.quotation-follow-up-dl dt {
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.quotation-follow-up-dl dd {
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.quotation-follow-up-linked {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quotation-follow-up-linked div,
+.quotation-follow-up-terms {
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 11px 12px;
+}
+
+.quotation-follow-up-linked strong,
+.quotation-follow-up-terms > strong {
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.quotation-follow-up-linked span {
+    color: var(--text);
+    font-size: 0.86rem;
+    font-weight: 800;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.quotation-follow-up-terms article {
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 4px;
+    padding-top: 8px;
+}
+
+.quotation-follow-up-terms article:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.quotation-follow-up-terms span {
+    color: var(--teal-strong);
+    font-size: 0.86rem;
+    font-weight: 900;
+}
+
+.quotation-follow-up-terms p {
+    color: #344054;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.quotation-follow-up-group-form {
+    align-items: end;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.62fr) auto auto;
+    padding: 16px;
+}
+
+.quotation-follow-up-group-form label {
+    display: grid;
+    gap: 6px;
+}
+
+.quotation-follow-up-group-form label span {
+    color: #48596a;
+    font-size: 0.8rem;
+    font-weight: 900;
+}
+
+.quotation-follow-up-group-form input,
+.quotation-follow-up-group-form select {
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    min-height: 42px;
+    outline: 0;
+    padding: 0 11px;
+    width: 100%;
+}
+
+.quotation-follow-up-group-form > span {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 900;
+    padding-bottom: 11px;
+    white-space: nowrap;
+}
+
+.quotation-follow-up-items {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+}
+
+.quotation-follow-up-item {
+    align-items: center;
+    background: #fbfcfd;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.42fr) minmax(150px, 0.44fr) auto;
+    min-width: 0;
+    padding: 12px;
+}
+
+.quotation-follow-up-item label {
+    align-items: center;
+    display: flex;
+    gap: 11px;
+    min-width: 0;
+}
+
+.quotation-follow-up-item input[type="checkbox"] {
+    accent-color: var(--teal);
+    flex: 0 0 auto;
+    height: 17px;
+    width: 17px;
+}
+
+.quotation-follow-up-item strong,
+.quotation-follow-up-item small,
+.quotation-follow-up-item > span:not(.stage-pill) {
+    overflow-wrap: anywhere;
+}
+
+.quotation-follow-up-item strong {
+    color: var(--teal-strong);
+    display: block;
+    font-size: 0.92rem;
+}
+
+.quotation-follow-up-item small {
+    color: var(--muted);
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin-top: 3px;
+}
+
+.quotation-follow-up-item > span:not(.stage-pill) {
+    color: #344054;
+    font-size: 0.86rem;
+    font-weight: 800;
+}
+
+.quotation-follow-up-groups {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 16px;
+}
+
+.quotation-follow-up-group-card {
+    align-content: start;
+    background: #fbfcfd;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    padding: 14px;
+}
+
+.quotation-follow-up-group-card header {
+    align-items: start;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.quotation-follow-up-group-card h3 {
+    color: var(--teal-strong);
+    font-size: 1rem;
+    line-height: 1.2;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.quotation-follow-up-group-card p {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 800;
+    margin: 4px 0 0;
+}
+
+.quotation-follow-up-group-card .stage-pill {
+    line-height: 1.25;
+    max-width: 260px;
+    white-space: normal;
+}
+
+.quotation-follow-up-chip-row,
+.quotation-follow-up-mini-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.quotation-follow-up-chip-row span,
+.quotation-follow-up-mini-items span {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: #344054;
+    font-size: 0.78rem;
+    font-weight: 850;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 6px 9px;
+}
+
+.quotation-follow-up-group-card > button {
+    justify-self: start;
+}
+
 .quotation-items-panel {
     overflow: hidden;
 }
@@ -3867,6 +4177,7 @@ button:disabled {
         minmax(86px, 0.55fr)
         minmax(86px, 0.55fr)
         minmax(108px, 0.7fr)
+        minmax(84px, 0.55fr)
         minmax(112px, 0.7fr);
     padding: 14px;
 }
@@ -3991,6 +4302,15 @@ button:disabled {
     color: var(--green-strong);
     font-size: 1.4rem;
     line-height: 1;
+}
+
+.items-footer .quotation-total-stack {
+    gap: 4px 14px;
+    grid-template-columns: repeat(3, max-content);
+}
+
+.items-footer .quotation-total-stack strong {
+    font-size: 1rem;
 }
 
 .quotation-complete-panel {
@@ -4563,6 +4883,83 @@ button:disabled {
     padding: 16px;
 }
 
+.supplier-po-filter-panel {
+    align-items: end;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1.4fr) repeat(5, minmax(140px, 1fr)) auto auto;
+    padding: 16px;
+}
+
+.supplier-po-filter-panel .quote-field {
+    margin: 0;
+}
+
+.supplier-po-filter-panel .secondary-action {
+    min-height: 40px;
+}
+
+.supplier-po-current-toggle {
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    min-height: 40px;
+    padding: 0 12px;
+}
+
+.supplier-po-current-toggle input {
+    accent-color: var(--teal);
+    height: 16px;
+    width: 16px;
+}
+
+.supplier-po-current-toggle span {
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 850;
+}
+
+.supplier-po-filter-search .mini-search {
+    min-height: 40px;
+}
+
+.supplier-po-selection-strip {
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 16px;
+}
+
+.supplier-po-selection-strip article {
+    align-items: center;
+    background: #f6fbfa;
+    border: 1px solid rgb(0 95 90 / 12%);
+    border-radius: 8px;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    min-width: min(100%, 310px);
+    padding: 10px 12px;
+}
+
+.supplier-po-selection-strip strong {
+    color: var(--teal-strong);
+    display: block;
+    font-size: 0.88rem;
+}
+
+.supplier-po-selection-strip span {
+    color: var(--muted);
+    display: block;
+    font-size: 0.76rem;
+    font-weight: 800;
+    margin-top: 2px;
+}
+
 .supplier-po-item-card {
     align-items: center;
     background: #fbfcfd;
@@ -4915,6 +5312,8 @@ button:disabled {
     .follow-up-reminder-grid,
     .follow-up-control-panel,
     .follow-up-group-grid,
+    .quotation-follow-up-layout,
+    .quotation-follow-up-groups,
     .follow-up-visual-grid,
     .visual-sample-grid,
     .follow-up-detail-grid,
@@ -4955,6 +5354,27 @@ button:disabled {
 
     .follow-up-control-panel {
         align-items: stretch;
+    }
+
+    .quotation-follow-up-group-form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .quotation-follow-up-item {
+        grid-template-columns: minmax(0, 1fr) minmax(140px, 0.42fr);
+    }
+
+    .quotation-follow-up-item .table-link-button {
+        justify-self: start;
+    }
+
+    .quotation-follow-up-group-card header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .quotation-follow-up-group-card .stage-pill {
+        max-width: none;
     }
 
     .quotation-workspace-actions,
@@ -5030,6 +5450,10 @@ button:disabled {
     .acknowledgement-summary,
     .follow-up-form.inline-form,
     .comment-meta-grid,
+    .quotation-follow-up-dl,
+    .quotation-follow-up-linked,
+    .quotation-follow-up-group-form,
+    .quotation-follow-up-item,
     .logistics-form-grid,
     .logistics-action-grid,
     .logistics-receipt-grid,
@@ -5071,7 +5495,10 @@ button:disabled {
     .quotation-form-panel footer button,
     .items-footer button,
     .terms-actions button,
-    .complete-actions button {
+    .complete-actions button,
+    .quotation-follow-up-group-form button,
+    .quotation-follow-up-item button,
+    .quotation-follow-up-group-card button {
         width: 100%;
     }
 

@@ -54,6 +54,7 @@ interface FollowUpItem {
     id: number;
     supplier_po_reference: string | null;
     quotation_reference: string | null;
+    quotation_delivery_responsibility: 'isc' | 'buyer' | 'supplier' | null;
     buyer_po_number: string | null;
     buyer_po_date: string | null;
     buyer_company_name: string | null;
@@ -70,6 +71,7 @@ interface FollowUpItem {
     description: string | null;
     quantity: string | null;
     uom: string | null;
+    quotation_item_vat_rate: string;
     manufacturer_name: string | null;
     reminder_interval_value: number | null;
     reminder_interval_unit: string | null;
@@ -96,6 +98,7 @@ interface ShippingDocument {
     id: number;
     document_type: string;
     label: string;
+    is_required: boolean;
     status: string;
     document_number: string | null;
     document_date: string | null;
@@ -229,7 +232,6 @@ const isSavingReminder = ref(false);
 const isSavingComment = ref(false);
 const isSavingAcknowledgement = ref(false);
 const isSavingDocumentType = ref<string | null>(null);
-const isSavingPackingList = ref(false);
 const isCompletingShippingDocuments = ref(false);
 const isSavingLogistics = ref<string | null>(null);
 const isSavingDeliveryOrder = ref(false);
@@ -259,12 +261,6 @@ const acknowledgementForm = reactive({
     acknowledgement_received_at: '',
     acknowledgement_notes: '',
 });
-const packingListForm = reactive({
-    package_size: '',
-    gross_weight: '',
-    net_weight: '',
-    remarks: '',
-});
 const logisticsForm = reactive({
     delivery_responsibility: 'isc' as LogisticsCase['delivery_responsibility'],
     eta_at: '',
@@ -289,8 +285,7 @@ const deliveryOrderForm = reactive({
 });
 const invoiceForm = reactive({
     payment_term_days: 45,
-    vat_rate: '5',
-    vat_amount: '',
+    vat_rate: '0',
     vat_exception_reason: '',
     bank_details: '',
     remarks: '',
@@ -319,15 +314,8 @@ const canSaveReminder = computed(() => {
 });
 const canSaveComment = computed(() => commentForm.comment.trim().length > 0 && !isSavingComment.value);
 const canSaveAcknowledgement = computed(() => acknowledgementForm.acknowledgement_received_at.length > 0 && !isSavingAcknowledgement.value);
-const canSavePackingList = computed(
-    () =>
-        packingListForm.package_size.trim().length > 0 &&
-        packingListForm.gross_weight.trim().length > 0 &&
-        packingListForm.net_weight.trim().length > 0 &&
-        !isSavingPackingList.value,
-);
-const uploadableShippingDocuments = computed(() => item.value?.shipping_documents.filter((document) => document.document_type !== 'packing_list') ?? []);
-const packingListDocument = computed(() => item.value?.shipping_documents.find((document) => document.document_type === 'packing_list') ?? null);
+const requiredShippingDocuments = computed(() => item.value?.shipping_documents.filter((document) => document.is_required) ?? []);
+const optionalTransportDocuments = computed(() => item.value?.shipping_documents.filter((document) => !document.is_required) ?? []);
 const logisticsCase = computed(() => item.value?.logistics_case ?? null);
 const canSaveEta = computed(
     () => Boolean(item.value?.shipping_documents_complete && logisticsForm.eta_at.length > 0) && isSavingLogistics.value === null,
@@ -356,9 +344,9 @@ const canMarkBuyerReceived = computed(
         ) && isSavingLogistics.value === null,
 );
 const shouldShowDocumentsSent = computed(() => logisticsCase.value?.delivery_responsibility === 'buyer_agent');
-const shouldShowArrival = computed(() => logisticsCase.value?.delivery_responsibility !== 'buyer_agent');
-const shouldShowWarehouseReceipt = computed(() => logisticsCase.value?.delivery_responsibility !== 'buyer_agent');
-const shouldShowBuyerReceipt = computed(() => logisticsCase.value?.delivery_responsibility !== 'isc');
+const shouldShowArrival = computed(() => logisticsCase.value?.delivery_responsibility === 'isc' || logisticsCase.value?.delivery_responsibility === 'supplier');
+const shouldShowWarehouseReceipt = computed(() => logisticsCase.value?.delivery_responsibility === 'isc');
+const shouldShowBuyerReceipt = computed(() => logisticsCase.value?.delivery_responsibility === 'buyer_agent');
 const canSaveDeliveryOrder = computed(
     () =>
         Boolean(item.value && (item.value.status === 'ready_for_delivery_order' || item.value.delivery_order) && deliveryOrderForm.delivery_place.trim().length > 0) &&
@@ -368,7 +356,7 @@ const canUploadSignedDeliveryOrder = computed(
     () => Boolean(item.value?.delivery_order && deliveryOrderForm.signed_at.length > 0 && signedDeliveryOrderFile.value) && !isUploadingSignedDeliveryOrder.value,
 );
 const canSaveInvoice = computed(
-    () => Boolean(item.value && (item.value.status === 'ready_for_invoice' || item.value.invoice) && invoiceForm.payment_term_days >= 0 && invoiceForm.vat_rate.length > 0) && !isSavingInvoice.value,
+    () => Boolean(item.value && (item.value.status === 'ready_for_invoice' || item.value.invoice) && invoiceForm.payment_term_days >= 0) && !isSavingInvoice.value,
 );
 const canMarkInvoiceSent = computed(() => Boolean(item.value?.invoice && item.value.invoice.status === 'issued') && !isMarkingInvoiceSent.value);
 const canSavePayment = computed(
@@ -376,8 +364,11 @@ const canSavePayment = computed(
 );
 const canCloseJob = computed(() => Boolean(item.value?.invoice?.payment_status === 'paid' && item.value.status !== 'closed') && !isClosingJob.value);
 const deliveryResponsibility = computed(() => logisticsCase.value?.delivery_responsibility ?? logisticsForm.delivery_responsibility);
+const isIscHandledDelivery = computed(() => deliveryResponsibility.value === 'isc');
 const isBuyerHandledDelivery = computed(() => deliveryResponsibility.value === 'buyer_agent');
+const isSupplierHandledDelivery = computed(() => deliveryResponsibility.value === 'supplier');
 const isExternalHandledDelivery = computed(() => deliveryResponsibility.value !== 'isc');
+const invoiceReadyStatuses = ['ready_for_invoice', 'invoice_created', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'];
 const acknowledgementComplete = computed(() => Boolean(item.value?.acknowledgement_received_at));
 const shippingAvailable = computed(() => acknowledgementComplete.value || Boolean(item.value && item.value.status !== 'awaiting_acknowledgement'));
 const shippingComplete = computed(() => Boolean(item.value?.shipping_documents_complete));
@@ -389,13 +380,17 @@ const deliveryComplete = computed(() => {
         return false;
     }
 
-    if (isExternalHandledDelivery.value) {
-        return Boolean(logisticsCase.value?.buyer_received_at || logisticsCase.value?.status === 'buyer_received' || item.value.invoice);
+    if (isSupplierHandledDelivery.value) {
+        return Boolean(logisticsCase.value?.arrived_at || logisticsCase.value?.status === 'supplier_received' || item.value.invoice || invoiceReadyStatuses.includes(item.value.status));
+    }
+
+    if (isBuyerHandledDelivery.value) {
+        return Boolean(logisticsCase.value?.buyer_received_at || logisticsCase.value?.status === 'buyer_received' || item.value.invoice || invoiceReadyStatuses.includes(item.value.status));
     }
 
     return Boolean(
         item.value.delivery_order?.status === 'signed' ||
-            ['ready_for_invoice', 'invoice_created', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'].includes(item.value.status),
+            invoiceReadyStatuses.includes(item.value.status),
     );
 });
 const invoiceAvailable = computed(() => deliveryComplete.value || Boolean(item.value?.invoice) || item.value?.status === 'ready_for_invoice');
@@ -426,8 +421,12 @@ const followUpSteps = computed<FollowUpWorkflowStep[]>(() => [
     },
     {
         key: 'delivery',
-        label: isExternalHandledDelivery.value ? 'Agent / Receipt' : 'Delivery to ISC',
-        caption: isExternalHandledDelivery.value ? 'Send documents and confirm receipt' : 'Arrival, warehouse, and delivery note',
+        label: isSupplierHandledDelivery.value ? 'Supplier Receipt' : isExternalHandledDelivery.value ? 'Agent / Receipt' : 'Delivery to ISC',
+        caption: isSupplierHandledDelivery.value
+            ? 'Confirm supplier receipt before invoice'
+            : isExternalHandledDelivery.value
+              ? 'Send documents and confirm buyer receipt'
+              : 'Arrival, warehouse, and delivery note',
         available: deliveryAvailable.value,
         complete: deliveryComplete.value,
     },
@@ -483,14 +482,28 @@ function preferredFollowUpStepKey(payload: FollowUpItem): FollowUpStepKey {
         return 'logistics';
     }
 
-    if (payload.logistics_case.delivery_responsibility !== 'isc' && !payload.logistics_case.buyer_received_at && !payload.invoice) {
+    if (
+        payload.logistics_case.delivery_responsibility === 'supplier' &&
+        !payload.logistics_case.arrived_at &&
+        !payload.invoice &&
+        !invoiceReadyStatuses.includes(payload.status)
+    ) {
+        return 'delivery';
+    }
+
+    if (
+        payload.logistics_case.delivery_responsibility === 'buyer_agent' &&
+        !payload.logistics_case.buyer_received_at &&
+        !payload.invoice &&
+        !invoiceReadyStatuses.includes(payload.status)
+    ) {
         return 'delivery';
     }
 
     if (
         payload.logistics_case.delivery_responsibility === 'isc' &&
         payload.delivery_order?.status !== 'signed' &&
-        !['ready_for_invoice', 'invoice_created', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'].includes(payload.status)
+        !invoiceReadyStatuses.includes(payload.status)
     ) {
         return 'delivery';
     }
@@ -511,6 +524,22 @@ function selectFollowUpStep(key: FollowUpStepKey): void {
 
     hasSelectedFollowUpStep.value = true;
     activeFollowUpStep.value = key;
+}
+
+function defaultDeliveryResponsibility(payload: FollowUpItem): LogisticsCase['delivery_responsibility'] {
+    if (payload.logistics_case?.delivery_responsibility) {
+        return payload.logistics_case.delivery_responsibility;
+    }
+
+    if (payload.quotation_delivery_responsibility === 'buyer') {
+        return 'buyer_agent';
+    }
+
+    if (payload.quotation_delivery_responsibility === 'supplier') {
+        return 'supplier';
+    }
+
+    return 'isc';
 }
 
 function moveFollowUpStep(direction: 'previous' | 'next'): void {
@@ -572,14 +601,7 @@ function applyItem(payload: FollowUpItem): void {
         };
     }
 
-    if (payload.packing_list) {
-        packingListForm.package_size = payload.packing_list.package_size;
-        packingListForm.gross_weight = payload.packing_list.gross_weight;
-        packingListForm.net_weight = payload.packing_list.net_weight;
-        packingListForm.remarks = payload.packing_list.remarks ?? '';
-    }
-
-    logisticsForm.delivery_responsibility = payload.logistics_case?.delivery_responsibility ?? 'isc';
+    logisticsForm.delivery_responsibility = defaultDeliveryResponsibility(payload);
     logisticsForm.eta_at = toDateTimeLocal(payload.logistics_case?.eta_at ?? null);
     logisticsForm.agent_name = payload.logistics_case?.agent_name ?? '';
     logisticsForm.agent_contact = payload.logistics_case?.agent_contact ?? '';
@@ -597,8 +619,7 @@ function applyItem(payload: FollowUpItem): void {
     deliveryOrderForm.signed_at = toDateTimeLocal(payload.delivery_order?.signed_at ?? null);
 
     invoiceForm.payment_term_days = payload.invoice?.payment_term_days ?? invoiceForm.payment_term_days;
-    invoiceForm.vat_rate = payload.invoice?.vat_rate ?? invoiceForm.vat_rate;
-    invoiceForm.vat_amount = payload.invoice?.vat_amount ?? invoiceForm.vat_amount;
+    invoiceForm.vat_rate = payload.invoice?.vat_rate ?? payload.quotation_item_vat_rate ?? '0.000';
     invoiceForm.vat_exception_reason = payload.invoice?.vat_exception_reason ?? '';
     invoiceForm.bank_details = payload.invoice?.bank_details ?? invoiceForm.bank_details;
     invoiceForm.remarks = payload.invoice?.remarks ?? invoiceForm.remarks;
@@ -751,28 +772,6 @@ async function uploadShippingDocument(document: ShippingDocument): Promise<void>
     }
 }
 
-async function savePackingList(): Promise<void> {
-    if (!canSavePackingList.value) {
-        return;
-    }
-
-    isSavingPackingList.value = true;
-
-    try {
-        const payload = await requestJson<{ message: string; data: PackingList }>(`/api/follow-up/${itemId.value}/packing-list`, {
-            method: 'POST',
-            body: JSON.stringify(packingListForm),
-        });
-
-        await loadItem();
-        showToast('success', payload.message);
-    } catch (error) {
-        showToast('error', error instanceof Error ? error.message : 'Unable to generate packing list.');
-    } finally {
-        isSavingPackingList.value = false;
-    }
-}
-
 async function completeShippingDocuments(): Promise<void> {
     isCompletingShippingDocuments.value = true;
 
@@ -787,18 +786,6 @@ async function completeShippingDocuments(): Promise<void> {
         showToast('error', error instanceof Error ? error.message : 'Unable to complete shipping documents.');
     } finally {
         isCompletingShippingDocuments.value = false;
-    }
-}
-
-async function downloadPackingList(format: 'docx' | 'pdf'): Promise<void> {
-    if (!item.value?.packing_list) {
-        return;
-    }
-
-    try {
-        await downloadProtectedFile(item.value.packing_list.downloads[format], `${item.value.packing_list.packing_list_reference}.${format}`);
-    } catch (error) {
-        showToast('error', error instanceof Error ? error.message : 'Unable to download packing list.');
     }
 }
 
@@ -1000,8 +987,6 @@ async function saveInvoice(): Promise<void> {
             method: 'POST',
             body: JSON.stringify({
                 payment_term_days: Number(invoiceForm.payment_term_days),
-                vat_rate: invoiceForm.vat_rate,
-                vat_amount: invoiceForm.vat_amount || null,
                 vat_exception_reason: invoiceForm.vat_exception_reason,
                 bank_details: invoiceForm.bank_details,
                 remarks: invoiceForm.remarks,
@@ -1282,7 +1267,7 @@ onMounted(loadItem);
                     <header>
                         <div>
                             <p>Shipping Documents</p>
-                            <h2>Required Checklist</h2>
+                            <h2>Required Uploads</h2>
                         </div>
                         <span class="stage-pill" :class="item.shipping_documents_complete ? 'teal' : 'amber'">
                             {{ item.shipping_documents_complete ? 'Complete' : 'Pending' }}
@@ -1290,7 +1275,40 @@ onMounted(loadItem);
                     </header>
 
                     <div class="shipping-document-list">
-                        <article v-for="document in uploadableShippingDocuments" :key="document.document_type" class="shipping-document-row">
+                        <article v-for="document in requiredShippingDocuments" :key="document.document_type" class="shipping-document-row">
+                            <div>
+                                <strong>{{ document.label }}</strong>
+                                <span>{{ statusLabelForDocument(document.status) }}</span>
+                                <small v-if="document.document_type === 'packing_list'">Upload Packing List from carrier</small>
+                                <small v-else>Required before ETA</small>
+                                <small v-if="document.original_file_name">{{ document.original_file_name }}</small>
+                            </div>
+
+                            <label>
+                                <span>Document No.</span>
+                                <input v-model="shippingDocumentForms[document.document_type].document_number" type="text" />
+                            </label>
+                            <label>
+                                <span>Date</span>
+                                <input v-model="shippingDocumentForms[document.document_type].document_date" type="date" />
+                            </label>
+                            <label>
+                                <span>File</span>
+                                <input type="file" @change="selectShippingDocumentFile(document.document_type, $event)" />
+                            </label>
+                            <button class="secondary-action compact-action" type="button" :disabled="isSavingDocumentType === document.document_type" @click="uploadShippingDocument(document)">
+                                <Loader2 v-if="isSavingDocumentType === document.document_type" class="spin-icon" :size="17" aria-hidden="true" />
+                                <Upload v-else :size="17" aria-hidden="true" />
+                                Upload
+                            </button>
+                        </article>
+
+                        <div class="shipping-document-subtitle">
+                            <strong>Optional Transport Documents</strong>
+                            <span>Upload any transport file you receive: bill of lading, airway bill, land transport, or carrier document.</span>
+                        </div>
+
+                        <article v-for="document in optionalTransportDocuments" :key="document.document_type" class="shipping-document-row optional-document-row">
                             <div>
                                 <strong>{{ document.label }}</strong>
                                 <span>{{ statusLabelForDocument(document.status) }}</span>
@@ -1315,24 +1333,6 @@ onMounted(loadItem);
                                 Upload
                             </button>
                         </article>
-
-                        <article v-if="packingListDocument" class="shipping-document-row packing-document-row">
-                            <div>
-                                <strong>{{ packingListDocument.label }}</strong>
-                                <span>{{ statusLabelForDocument(packingListDocument.status) }}</span>
-                                <small v-if="item.packing_list">{{ item.packing_list.packing_list_reference }}</small>
-                            </div>
-                            <div class="packing-downloads">
-                                <button class="table-link-button" type="button" :disabled="!item.packing_list" @click="downloadPackingList('docx')">
-                                    <Download :size="15" aria-hidden="true" />
-                                    Word
-                                </button>
-                                <button class="table-link-button" type="button" :disabled="!item.packing_list" @click="downloadPackingList('pdf')">
-                                    <Download :size="15" aria-hidden="true" />
-                                    PDF
-                                </button>
-                            </div>
-                        </article>
                     </div>
 
                     <button class="primary-action compact-action" type="button" :disabled="item.shipping_documents_complete || isCompletingShippingDocuments" @click="completeShippingDocuments">
@@ -1340,42 +1340,6 @@ onMounted(loadItem);
                         <CheckCircle2 v-else :size="17" aria-hidden="true" />
                         Complete Shipping Documents
                     </button>
-                </article>
-
-                <article class="follow-up-panel">
-                    <header>
-                        <div>
-                            <p>Packing List</p>
-                            <h2>Package Details</h2>
-                        </div>
-                        <FileCheck2 :size="22" aria-hidden="true" />
-                    </header>
-
-                    <form class="follow-up-form" @submit.prevent="savePackingList">
-                        <label>
-                            <span>Package Size</span>
-                            <input v-model="packingListForm.package_size" type="text" placeholder="120*80*956 CM" required />
-                        </label>
-                        <div class="comment-meta-grid">
-                            <label>
-                                <span>Gross Weight</span>
-                                <input v-model="packingListForm.gross_weight" type="text" placeholder="330 Kg" required />
-                            </label>
-                            <label>
-                                <span>Net Weight</span>
-                                <input v-model="packingListForm.net_weight" type="text" placeholder="300 Kg" required />
-                            </label>
-                        </div>
-                        <label>
-                            <span>Remarks</span>
-                            <textarea v-model="packingListForm.remarks" rows="3"></textarea>
-                        </label>
-                        <button class="primary-action compact-action" type="submit" :disabled="!canSavePackingList">
-                            <Loader2 v-if="isSavingPackingList" class="spin-icon" :size="17" aria-hidden="true" />
-                            <FileCheck2 v-else :size="17" aria-hidden="true" />
-                            Generate Packing List
-                        </button>
-                    </form>
                 </article>
             </section>
 
@@ -1452,7 +1416,7 @@ onMounted(loadItem);
                             <article v-if="shouldShowArrival" class="logistics-step">
                                 <div>
                                     <Truck :size="18" aria-hidden="true" />
-                                    <strong>Arrived</strong>
+                                    <strong>{{ isSupplierHandledDelivery ? 'Supplier Receipt' : 'Arrived' }}</strong>
                                 </div>
                                 <input v-model="logisticsEventForm.arrived_at" type="datetime-local" />
                                 <button class="secondary-action compact-action" type="button" :disabled="!canMarkArrived" @click="markArrived">
@@ -1523,8 +1487,8 @@ onMounted(loadItem);
                 </article>
             </section>
 
-            <section v-if="(activeFollowUpStep === 'delivery' && !isBuyerHandledDelivery) || activeFollowUpStep === 'invoice'" class="follow-up-detail-grid document-flow-grid">
-                <article v-if="activeFollowUpStep === 'delivery' && !isBuyerHandledDelivery" class="follow-up-panel document-flow-panel">
+            <section v-if="(activeFollowUpStep === 'delivery' && isIscHandledDelivery) || activeFollowUpStep === 'invoice'" class="follow-up-detail-grid document-flow-grid">
+                <article v-if="activeFollowUpStep === 'delivery' && isIscHandledDelivery" class="follow-up-panel document-flow-panel">
                     <header>
                         <div>
                             <p>Delivery Order</p>
@@ -1600,7 +1564,7 @@ onMounted(loadItem);
                     </header>
 
                     <p v-if="!item.invoice && item.status !== 'ready_for_invoice'" class="logistics-gate">
-                        Invoice can be created after signed DO upload or buyer receipt confirmation.
+                        Invoice can be created after signed DO upload, buyer receipt confirmation, or supplier receipt acknowledgement.
                     </p>
 
                     <div v-if="item.invoice" class="document-summary invoice-summary">
@@ -1618,12 +1582,8 @@ onMounted(loadItem);
                             <input v-model.number="invoiceForm.payment_term_days" type="number" min="0" max="3650" required />
                         </label>
                         <label>
-                            <span>VAT Rate %</span>
-                            <input v-model="invoiceForm.vat_rate" type="number" min="0" max="100" step="0.001" required />
-                        </label>
-                        <label>
-                            <span>VAT Amount</span>
-                            <input v-model="invoiceForm.vat_amount" type="number" min="0" step="0.001" placeholder="Auto if blank" />
+                            <span>Quotation VAT %</span>
+                            <input v-model="invoiceForm.vat_rate" type="number" min="0" max="100" step="0.001" readonly />
                         </label>
                         <label>
                             <span>VAT Exception Reason</span>

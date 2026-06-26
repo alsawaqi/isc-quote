@@ -332,5 +332,13 @@ export function homePathForUser(user: User | null = currentUser.value): string {
         return '/countries';
     }
 
+    if (hasAnyPermission(['view-uoms', 'create-uoms', 'update-uoms', 'delete-uoms'], user)) {
+        return '/uoms';
+    }
+
+    if (hasAnyPermission(['view-currencies', 'create-currencies', 'update-currencies', 'delete-currencies'], user)) {
+        return '/currencies';
+    }
+
     return '/login';
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\BuyerPo;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Currency;
 use App\Models\Incoterm;
 use App\Models\Manufacturer;
 use App\Models\Product;
@@ -14,11 +15,13 @@ use App\Models\QuotationItem;
 use App\Models\QuotationTerm;
 use App\Models\QuotationVersion;
 use App\Models\Supplier;
+use App\Models\Uom;
 use App\Models\User;
 use App\Services\QuotationDocumentService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -32,11 +35,11 @@ class QuotationController extends Controller
 
     private const DELIVERY_TYPES = ['working', 'calendar'];
 
-    private const CURRENCIES = ['OMR', 'USD', 'EUR', 'GBP'];
+    private const DEFAULT_CURRENCIES = ['OMR', 'USD', 'EUR', 'GBP'];
 
-    private const RESPONSIBILITIES = ['isc', 'buyer'];
+    private const RESPONSIBILITIES = ['isc', 'buyer', 'supplier'];
 
-    private const UOMS = ['EA', 'PCS', 'SET', 'LOT', 'MTR', 'KG'];
+    private const DEFAULT_UOMS = ['EA', 'PCS', 'SET', 'LOT', 'MTR', 'KG'];
 
     private const DEFAULT_TERMS = [
         ['key' => 'cancellation', 'title' => 'Cancellation'],
@@ -121,14 +124,8 @@ class QuotationController extends Controller
                 ->where('status', 'active')
                 ->orderBy('name')
                 ->get(['id', 'name']),
-            'currencies' => collect(self::CURRENCIES)->map(fn (string $currency) => [
-                'id' => $currency,
-                'name' => $currency,
-            ])->values(),
-            'uoms' => collect(self::UOMS)->map(fn (string $uom) => [
-                'id' => $uom,
-                'name' => $uom,
-            ])->values(),
+            'currencies' => $this->currencyOptions(),
+            'uoms' => $this->uomOptions(),
             'period_units' => collect(self::PERIOD_UNITS)->map(fn (string $unit) => [
                 'id' => $unit,
                 'name' => Str::ucfirst($unit),
@@ -136,6 +133,7 @@ class QuotationController extends Controller
             'delivery_responsibilities' => [
                 ['id' => 'isc', 'name' => 'ISC / supplier responsible'],
                 ['id' => 'buyer', 'name' => 'Buyer responsible'],
+                ['id' => 'supplier', 'name' => 'Supplier / manufacturer responsible'],
             ],
             'term_defaults' => self::DEFAULT_TERMS,
         ]);
@@ -171,7 +169,7 @@ class QuotationController extends Controller
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
             'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
-            'accepted_invoice_currency' => ['required', Rule::in(self::CURRENCIES)],
+            'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
                 'required',
                 'integer',
@@ -240,7 +238,7 @@ class QuotationController extends Controller
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
             'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
-            'accepted_invoice_currency' => ['required', Rule::in(self::CURRENCIES)],
+            'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
                 'required',
                 'integer',
@@ -285,8 +283,9 @@ class QuotationController extends Controller
             'items.*.buyer_description' => ['nullable', 'string'],
             'items.*.manufacturer_description' => ['nullable', 'string'],
             'items.*.quantity' => ['required', 'numeric', 'min:0.001', 'max:999999999'],
-            'items.*.uom' => ['required', 'string', 'max:24'],
+            'items.*.uom' => ['required', 'string', 'max:24', Rule::in($this->uomCodes())],
             'items.*.unit_price' => ['required', 'numeric', 'min:0', 'max:999999999'],
+            'items.*.vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $quotation = DB::transaction(function () use ($quotation, $validated): Quotation {
@@ -319,6 +318,7 @@ class QuotationController extends Controller
                     'quantity' => $this->money($item['quantity']),
                     'uom' => trim((string) $item['uom']),
                     'unit_price' => $this->money($item['unit_price']),
+                    'vat_rate' => $this->money($item['vat_rate'] ?? 0),
                     'total_price' => $this->money(((float) $item['quantity']) * ((float) $item['unit_price'])),
                 ]);
             }
@@ -722,8 +722,81 @@ class QuotationController extends Controller
             'quantity' => $this->money($item->quantity),
             'uom' => $item->uom,
             'unit_price' => $this->money($item->unit_price),
+            'vat_rate' => $this->money($item->vat_rate),
             'total_price' => $this->money($item->total_price),
         ];
+    }
+
+    /**
+     * @return Collection<int, array{id: string, code: string, name: string, exchange_rate?: string|null}>
+     */
+    private function currencyOptions(): Collection
+    {
+        $configured = Currency::query()
+            ->where('status', 'active')
+            ->orderBy('code')
+            ->get(['code', 'name', 'exchange_rate'])
+            ->map(fn (Currency $currency): array => [
+                'id' => $currency->code,
+                'code' => $currency->code,
+                'name' => $currency->name,
+                'exchange_rate' => $currency->exchange_rate,
+            ]);
+
+        $defaults = collect(self::DEFAULT_CURRENCIES)->map(fn (string $currency): array => [
+            'id' => $currency,
+            'code' => $currency,
+            'name' => $currency,
+            'exchange_rate' => null,
+        ]);
+
+        return $configured->concat($defaults)->unique('id')->values();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function currencyCodes(): array
+    {
+        return $this->currencyOptions()
+            ->pluck('id')
+            ->map(fn (mixed $currency): string => (string) $currency)
+            ->all();
+    }
+
+    /**
+     * @return Collection<int, array{id: string, code: string, name: string}>
+     */
+    private function uomOptions(): Collection
+    {
+        $configured = Uom::query()
+            ->where('status', 'active')
+            ->orderBy('code')
+            ->get(['code', 'name'])
+            ->map(fn (Uom $uom): array => [
+                'id' => $uom->code,
+                'code' => $uom->code,
+                'name' => $uom->name,
+            ]);
+
+        $defaults = collect(self::DEFAULT_UOMS)->map(fn (string $uom): array => [
+            'id' => $uom,
+            'code' => $uom,
+            'name' => $uom,
+        ]);
+
+        return $configured->concat($defaults)->unique('id')->values();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function uomCodes(): array
+    {
+        return $this->uomOptions()
+            ->pluck('id')
+            ->map(fn (mixed $uom): string => (string) $uom)
+            ->all();
     }
 
     /**

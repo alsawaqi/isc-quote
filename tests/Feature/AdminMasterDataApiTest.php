@@ -106,6 +106,62 @@ class AdminMasterDataApiTest extends TestCase
         ], array_keys($response->json('data')));
     }
 
+    public function test_admin_can_manage_uoms_and_currencies_for_commercial_forms(): void
+    {
+        $token = $this->adminToken();
+
+        $uomId = $this->withToken($token)
+            ->postJson('/api/admin/uoms', [
+                'code' => 'BOX',
+                'name' => 'Box',
+                'status' => 'active',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'UOM created successfully.')
+            ->assertJsonPath('data.code', 'BOX')
+            ->assertJsonPath('data.name', 'Box')
+            ->json('data.id');
+
+        $this->withToken($token)
+            ->putJson("/api/admin/uoms/{$uomId}", [
+                'code' => 'BOX',
+                'name' => 'Box / Carton',
+                'status' => 'inactive',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.name', 'Box / Carton')
+            ->assertJsonPath('data.status', 'inactive');
+
+        $currencyId = $this->withToken($token)
+            ->postJson('/api/admin/currencies', [
+                'code' => 'AED',
+                'name' => 'UAE Dirham',
+                'exchange_rate' => '9.550000',
+                'status' => 'active',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Currency created successfully.')
+            ->assertJsonPath('data.code', 'AED')
+            ->assertJsonPath('data.exchange_rate', '9.550000')
+            ->json('data.id');
+
+        $this->withToken($token)
+            ->putJson("/api/admin/currencies/{$currencyId}", [
+                'code' => 'AED',
+                'name' => 'UAE Dirham',
+                'exchange_rate' => '9.600000',
+                'status' => 'active',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.exchange_rate', '9.600000');
+
+        $this->withToken($token)
+            ->getJson('/api/admin/master-data/options')
+            ->assertOk()
+            ->assertJsonFragment(['code' => 'BOX', 'name' => 'Box / Carton'])
+            ->assertJsonFragment(['code' => 'AED', 'name' => 'UAE Dirham', 'exchange_rate' => '9.600000']);
+    }
+
     public function test_admin_can_manage_manufacturers_as_country_named_records(): void
     {
         $token = $this->adminToken();

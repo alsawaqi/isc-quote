@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { AlertTriangle, CheckCircle2, Clock3, Eye, Loader2, RefreshCcw, Search } from 'lucide-vue-next';
-import { requestJson } from '../auth';
+import { AlertTriangle, CheckCircle2, Clock3, Download, Eye, Loader2, RefreshCcw, Search } from 'lucide-vue-next';
+import { downloadProtectedFile, requestJson } from '../auth';
 
 interface TraceOption {
     value: string;
@@ -93,6 +93,7 @@ const buyerId = ref('all');
 const supplierId = ref('all');
 const manufacturerId = ref('all');
 const isLoading = ref(false);
+const isExporting = ref(false);
 const toast = ref<Toast | null>(null);
 let searchTimer: number | undefined;
 
@@ -155,6 +156,20 @@ async function loadItems(): Promise<void> {
     }
 }
 
+async function exportItems(): Promise<void> {
+    isExporting.value = true;
+
+    try {
+        const params = traceParams();
+        await downloadProtectedFile(`/api/admin/trace/items/export${params.toString() ? `?${params.toString()}` : ''}`, 'item-trace.csv');
+        showToast('success', 'Item trace CSV downloaded.');
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to export item trace.');
+    } finally {
+        isExporting.value = false;
+    }
+}
+
 watch([status, buyerId, supplierId, manufacturerId], loadItems);
 
 watch(search, () => {
@@ -181,10 +196,17 @@ onMounted(loadItems);
                 <h1>Item Trace</h1>
             </div>
 
-            <button class="secondary-action icon-gap" type="button" :disabled="isLoading" @click="loadItems">
-                <RefreshCcw :class="{ 'spin-icon': isLoading }" :size="17" aria-hidden="true" />
-                Refresh
-            </button>
+            <div class="quotation-title-actions">
+                <button class="secondary-action icon-gap" type="button" :disabled="isExporting || isLoading" @click="exportItems">
+                    <Loader2 v-if="isExporting" class="spin-icon" :size="17" aria-hidden="true" />
+                    <Download v-else :size="17" aria-hidden="true" />
+                    Export CSV
+                </button>
+                <button class="secondary-action icon-gap" type="button" :disabled="isLoading" @click="loadItems">
+                    <RefreshCcw :class="{ 'spin-icon': isLoading }" :size="17" aria-hidden="true" />
+                    Refresh
+                </button>
+            </div>
         </div>
 
         <div class="module-stats trace-stats">

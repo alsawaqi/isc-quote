@@ -7,6 +7,8 @@ export const navigationItems: NavItem[] = [
     { label: 'Companies', icon: 'Building2', path: '/companies', roles: ['admin'], permissions: ['view-companies', 'create-companies', 'update-companies', 'delete-companies'] },
     { label: 'Contacts', icon: 'ContactRound', path: '/contacts', roles: ['admin'], permissions: ['view-contacts', 'create-contacts', 'update-contacts', 'delete-contacts'] },
     { label: 'Incoterms', icon: 'Ship', path: '/incoterms', roles: ['admin'], permissions: ['view-incoterms', 'create-incoterms', 'update-incoterms', 'delete-incoterms'] },
+    { label: 'UOMs', icon: 'Package', path: '/uoms', roles: ['admin'], permissions: ['view-uoms', 'create-uoms', 'update-uoms', 'delete-uoms'] },
+    { label: 'Currencies', icon: 'CircleDollarSign', path: '/currencies', roles: ['admin'], permissions: ['view-currencies', 'create-currencies', 'update-currencies', 'delete-currencies'] },
     { label: 'Manufacturers', icon: 'Factory', path: '/manufacturers', roles: ['admin'], permissions: ['view-manufacturers', 'create-manufacturers', 'update-manufacturers', 'delete-manufacturers'] },
     { label: 'Suppliers', icon: 'Warehouse', path: '/suppliers', roles: ['admin'], permissions: ['view-suppliers', 'create-suppliers', 'update-suppliers', 'delete-suppliers'] },
     { label: 'Users & Roles', icon: 'UsersRound', path: '/users-roles', roles: ['admin'], permissions: ['manage-users', 'manage-roles'] },
@@ -16,6 +18,7 @@ export const navigationItems: NavItem[] = [
     { label: 'Supplier POs', icon: 'Truck', path: '/supplier-pos', roles: ['admin', 'salesperson'], permissions: ['create-supplier-pos'], accent: 'sales' },
     { label: 'Follow-Up', icon: 'Clock3', path: '/follow-up', roles: ['admin', 'follow-up'], accent: 'follow' },
     { label: 'Follow-Up Groups', icon: 'LayoutDashboard', path: '/follow-up/groups', roles: ['admin', 'follow-up'], accent: 'follow' },
+    { label: 'Quotation Follow-Up', icon: 'FileText', path: '/follow-up/quotations', roles: ['admin', 'follow-up'], accent: 'follow' },
     { label: 'Visualization', icon: 'FileText', path: '/follow-up/visualization', roles: ['admin', 'follow-up'], accent: 'follow' },
 ];
 

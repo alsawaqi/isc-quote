@@ -273,6 +273,74 @@ class SupplierPoWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_supplier_po_create_options_can_filter_pending_items_for_incremental_selection(): void
+    {
+        $context = $this->supplierPoContext();
+
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $first['buyerPo']->forceFill(['po_date' => '2026-06-05'])->save();
+        $second = $this->acceptedQuotationItem($context, 'Global Petrochem Ltd.', 'GPL', '4502759999', 'ABB Terminal Box');
+        $second['buyerPo']->forceFill(['po_date' => '2026-07-12'])->save();
+        $closed = $this->acceptedQuotationItem($context, 'Closed Buyer LLC', 'CBL', '4502761111', 'ABB Closed Order');
+        $closed['quotation']->forceFill(['status' => 'closed'])->save();
+        $otherManufacturer = Manufacturer::create([
+            'country_id' => $context['country']->id,
+            'name' => 'Siemens Manufacturing',
+            'status' => 'active',
+        ]);
+        $siemens = $this->acceptedQuotationItem($context, 'Desert Energy FZE', 'DEF', '4502762222', 'Siemens Control Relay', $otherManufacturer);
+
+        $searchResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson("/api/supplier-pos/create-options?supplier_id={$context['supplier']->id}&search=OXY")
+            ->assertOk();
+        $searchIds = collect($searchResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($first['item']->id, $searchIds);
+        $this->assertNotContains($second['item']->id, $searchIds);
+
+        $quotationResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options?quotation_reference='.$second['quotation']->quotation_reference)
+            ->assertOk();
+        $quotationIds = collect($quotationResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($second['item']->id, $quotationIds);
+        $this->assertNotContains($first['item']->id, $quotationIds);
+
+        $buyerResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options?buyer_id='.$first['quotation']->buyer_company_id)
+            ->assertOk();
+        $buyerIds = collect($buyerResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($first['item']->id, $buyerIds);
+        $this->assertNotContains($second['item']->id, $buyerIds);
+
+        $dateResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options?buyer_po_date_from=2026-07-01&buyer_po_date_to=2026-07-31')
+            ->assertOk();
+        $dateIds = collect($dateResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($second['item']->id, $dateIds);
+        $this->assertNotContains($first['item']->id, $dateIds);
+
+        $manufacturerResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options?manufacturer_id='.$otherManufacturer->id)
+            ->assertOk();
+        $manufacturerIds = collect($manufacturerResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($siemens['item']->id, $manufacturerIds);
+        $this->assertNotContains($first['item']->id, $manufacturerIds);
+
+        $currentResponse = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options?current_only=1')
+            ->assertOk();
+        $currentIds = collect($currentResponse->json('pending_items'))->pluck('quotation_item_id')->all();
+        $this->assertContains($first['item']->id, $currentIds);
+        $this->assertNotContains($closed['item']->id, $currentIds);
+        $this->assertContains(
+            (string) $first['quotation']->buyer_company_id,
+            collect($currentResponse->json('pending_item_filters.buyers'))->pluck('value')->all()
+        );
+        $this->assertContains(
+            (string) $context['manufacturer']->id,
+            collect($currentResponse->json('pending_item_filters.manufacturers'))->pluck('value')->all()
+        );
+    }
+
     public function test_admin_without_user_contact_can_load_supplier_po_create_options_from_internal_company_fallback(): void
     {
         $context = $this->supplierPoContext();

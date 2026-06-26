@@ -76,6 +76,36 @@ class AdminTraceabilityApiTest extends TestCase
         }
     }
 
+    public function test_admin_can_download_filtered_quotation_trace_as_csv(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-06-08 10:00:00'));
+
+        try {
+            $context = $this->traceContext();
+            $oxy = $this->createTraceJob($context, 'Occidental Of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor', 'payment_pending');
+            $gpl = $this->createTraceJob($context, 'Global Petrochem Ltd.', 'GPL', '4502759999', 'ABB Terminal Box', 'awaiting_acknowledgement');
+
+            $response = $this->withBearerToken($context['admin'])
+                ->get('/api/admin/trace/quotations/export?search=Occidental&status=buyer_po_received')
+                ->assertOk()
+                ->assertHeader('content-type', 'text/csv; charset=UTF-8');
+
+            $this->assertStringContainsString('attachment; filename=quotation-trace-2026-06-08.csv', $response->headers->get('content-disposition') ?? '');
+
+            $csv = $response->streamedContent();
+            $rows = array_map('str_getcsv', preg_split('/\r\n|\r|\n/', trim($csv)) ?: []);
+
+            $this->assertSame(['Quotation Reference', 'Buyer', 'Buyer PO', 'Supplier PO', 'Status', 'Stage', 'Items', 'Total', 'Latest Comment', 'Updated At'], $rows[0]);
+            $this->assertStringContainsString($oxy['quotation']->quotation_reference, $csv);
+            $this->assertStringContainsString('Occidental Of Oman, Inc', $csv);
+            $this->assertStringContainsString('4502757812', $csv);
+            $this->assertStringContainsString('Payment / Close', $csv);
+            $this->assertStringNotContainsString($gpl['quotation']->quotation_reference, $csv);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_admin_can_filter_item_trace_by_product_and_supplier_status(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-06-08 10:00:00'));
@@ -102,6 +132,38 @@ class AdminTraceabilityApiTest extends TestCase
 
             $this->assertNotContains($second['item']->id, collect($response->json('data'))->pluck('quotation_item_id')->all());
             $this->assertContains('manufacturer_id', collect($response->json('filter_options'))->keys()->all());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_can_download_filtered_item_trace_as_csv(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-06-08 10:00:00'));
+
+        try {
+            $context = $this->traceContext();
+            $first = $this->createTraceJob($context, 'Occidental Of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor', 'payment_pending');
+            $second = $this->createTraceJob($context, 'Global Petrochem Ltd.', 'GPL', '4502759999', 'ABB Terminal Box', 'awaiting_acknowledgement');
+
+            $response = $this->withBearerToken($context['admin'])
+                ->get('/api/admin/trace/items/export?search=Flameproof&status=payment_pending')
+                ->assertOk()
+                ->assertHeader('content-type', 'text/csv; charset=UTF-8');
+
+            $this->assertStringContainsString('attachment; filename=item-trace-2026-06-08.csv', $response->headers->get('content-disposition') ?? '');
+
+            $csv = $response->streamedContent();
+            $rows = array_map('str_getcsv', preg_split('/\r\n|\r|\n/', trim($csv)) ?: []);
+
+            $this->assertSame(['Item', 'Quotation', 'Buyer', 'Buyer PO', 'Supplier', 'Supplier PO', 'Manufacturer', 'Status', 'Stage', 'Quantity', 'UOM', 'Latest Comment', 'Next Follow-Up'], $rows[0]);
+            $this->assertStringContainsString('ABB Flameproof Motor', $csv);
+            $this->assertStringContainsString($first['quotation']->quotation_reference, $csv);
+            $this->assertStringContainsString('Occidental Of Oman, Inc', $csv);
+            $this->assertStringContainsString('4502757812', $csv);
+            $this->assertStringContainsString('ABB LLC', $csv);
+            $this->assertStringContainsString('Payment / Close', $csv);
+            $this->assertStringNotContainsString($second['item']->product_name, $csv);
         } finally {
             Carbon::setTestNow();
         }

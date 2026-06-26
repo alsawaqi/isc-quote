@@ -14,6 +14,7 @@ const AdminQuotationTraceView = () => import('./components/AdminQuotationTraceVi
 const AdminItemTraceView = () => import('./components/AdminItemTraceView.vue');
 const FollowUpDashboardView = () => import('./components/FollowUpDashboardView.vue');
 const FollowUpGroupView = () => import('./components/FollowUpGroupView.vue');
+const FollowUpQuotationView = () => import('./components/FollowUpQuotationView.vue');
 const FollowUpVisualizationView = () => import('./components/FollowUpVisualizationView.vue');
 const FollowUpDetailView = () => import('./components/FollowUpDetailView.vue');
 
@@ -72,6 +73,8 @@ const routes: RouteRecordRaw[] = [
     moduleRoute('/companies', 'companies', 'Companies', adminRoles, resourcePermissions('companies')),
     moduleRoute('/contacts', 'contacts', 'Contacts', adminRoles, resourcePermissions('contacts')),
     moduleRoute('/incoterms', 'incoterms', 'Incoterms', adminRoles, resourcePermissions('incoterms')),
+    moduleRoute('/uoms', 'uoms', 'UOMs', adminRoles, resourcePermissions('uoms')),
+    moduleRoute('/currencies', 'currencies', 'Currencies', adminRoles, resourcePermissions('currencies')),
     moduleRoute('/manufacturers', 'manufacturers', 'Manufacturers', adminRoles, resourcePermissions('manufacturers')),
     moduleRoute('/suppliers', 'suppliers', 'Suppliers', adminRoles, resourcePermissions('suppliers')),
     moduleRoute('/users-roles', 'users-roles', 'Users & Roles', adminRoles, ['manage-users', 'manage-roles']),
@@ -204,6 +207,26 @@ const routes: RouteRecordRaw[] = [
             requiresAuth: true,
             roles: ['admin', 'follow-up'],
             title: 'Follow-Up Groups',
+        },
+    },
+    {
+        path: '/follow-up/quotations',
+        name: 'follow-up-quotations',
+        component: FollowUpQuotationView,
+        meta: {
+            requiresAuth: true,
+            roles: ['admin', 'follow-up'],
+            title: 'Follow-Up Quotations',
+        },
+    },
+    {
+        path: '/follow-up/quotations/:id',
+        name: 'follow-up-quotation-detail',
+        component: FollowUpQuotationView,
+        meta: {
+            requiresAuth: true,
+            roles: ['admin', 'follow-up'],
+            title: 'Quotation Follow-Up',
         },
     },
     {

@@ -36,6 +36,36 @@ class QuotationStepOneTest extends TestCase
             ->assertJsonPath('incoterms.0.code', 'DDP');
     }
 
+    public function test_salesperson_quotation_options_include_admin_managed_uoms_and_currencies(): void
+    {
+        $context = $this->quotationContext();
+        $admin = $this->adminUser();
+
+        $this->withBearerToken($admin)
+            ->postJson('/api/admin/uoms', [
+                'code' => 'BOX',
+                'name' => 'Box',
+                'status' => 'active',
+            ])
+            ->assertCreated();
+
+        $this->withBearerToken($admin)
+            ->postJson('/api/admin/currencies', [
+                'code' => 'AED',
+                'name' => 'UAE Dirham',
+                'exchange_rate' => '9.550000',
+                'status' => 'active',
+            ])
+            ->assertCreated();
+
+        $response = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/quotations/create-options')
+            ->assertOk();
+
+        $this->assertContains('BOX', collect($response->json('uoms'))->pluck('id')->all());
+        $this->assertContains('AED', collect($response->json('currencies'))->pluck('id')->all());
+    }
+
     public function test_salesperson_can_create_quotation_step_one_with_their_default_supplier(): void
     {
         $context = $this->quotationContext();
@@ -91,6 +121,44 @@ class QuotationStepOneTest extends TestCase
             'incoterm_id' => $context['incoterm']->id,
             'delivery_responsibility' => 'isc',
             'status' => 'draft',
+        ]);
+    }
+
+    public function test_salesperson_can_create_quotation_with_supplier_delivery_responsibility(): void
+    {
+        $context = $this->quotationContext();
+
+        $options = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/quotations/create-options')
+            ->assertOk();
+
+        $this->assertContains('supplier', collect($options->json('delivery_responsibilities'))->pluck('id')->all());
+
+        $response = $this->withBearerToken($context['salesperson'])
+            ->postJson('/api/quotations', [
+                'buyer_company_id' => $context['buyerCompany']->id,
+                'buyer_contact_id' => $context['buyerContact']->id,
+                'rfq_number' => 'RFQ-SUP-001',
+                'pr_number' => 'PR-SUP-001',
+                'closing_at' => '2026-06-02 14:30:00',
+                'quotation_validity_value' => 30,
+                'quotation_validity_unit' => 'days',
+                'payment_term_days' => 45,
+                'delivery_period_min' => 22,
+                'delivery_period_max' => 24,
+                'delivery_period_unit' => 'weeks',
+                'delivery_period_type' => 'working',
+                'accepted_invoice_currency' => 'OMR',
+                'incoterm_id' => $context['incoterm']->id,
+                'delivery_responsibility' => 'supplier',
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.delivery_responsibility', 'supplier');
+
+        $this->assertDatabaseHas('quotations', [
+            'id' => $response->json('data.id'),
+            'delivery_responsibility' => 'supplier',
         ]);
     }
 
@@ -228,6 +296,7 @@ class QuotationStepOneTest extends TestCase
                         'quantity' => 2,
                         'uom' => 'EA',
                         'unit_price' => '150.250',
+                        'vat_rate' => '5',
                     ],
                     [
                         'manufacturer_id' => $manufacturer->id,
@@ -238,12 +307,15 @@ class QuotationStepOneTest extends TestCase
                         'quantity' => 3,
                         'uom' => 'PCS',
                         'unit_price' => '10.000',
+                        'vat_rate' => '0',
                     ],
                 ],
             ]);
 
         $response->assertOk()
             ->assertJsonPath('message', 'Quotation items saved.')
+            ->assertJsonPath('data.items.0.vat_rate', '5.000')
+            ->assertJsonPath('data.items.1.vat_rate', '0.000')
             ->assertJsonPath('data.items.0.total_price', '300.500')
             ->assertJsonPath('data.items.1.total_price', '30.000')
             ->assertJsonPath('data.totals.subtotal', '330.500');
@@ -266,6 +338,7 @@ class QuotationStepOneTest extends TestCase
             'uom' => 'EA',
             'unit_price' => '150.250',
             'total_price' => '300.500',
+            'vat_rate' => '5.000',
         ]);
     }
 
@@ -453,6 +526,25 @@ class QuotationStepOneTest extends TestCase
         ])->json('token');
 
         return $this->withHeader('Authorization', "Bearer {$token}");
+    }
+
+    private function adminUser(): User
+    {
+        $adminRole = Role::create([
+            'name' => 'Admin',
+            'slug' => 'admin',
+            'is_system' => true,
+            'status' => 'active',
+        ]);
+        $admin = User::create([
+            'name' => 'Admin User',
+            'email' => 'admin@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+        $admin->roles()->attach($adminRole);
+
+        return $admin;
     }
 
     /**

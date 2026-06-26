@@ -178,6 +178,100 @@ class FollowUpWorkflowTest extends TestCase
         }
     }
 
+    public function test_follow_up_user_can_group_items_inside_a_quotation_workspace(): void
+    {
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $secondProduct = Product::create([
+            'manufacturer_id' => $context['manufacturer']->id,
+            'name' => 'ABB Terminal Box',
+            'title' => 'ABB Terminal Box',
+            'buyer_description' => '<p>Second buyer-visible description.</p>',
+            'manufacturer_description' => '<p>Second supplier-visible description.</p>',
+            'last_uom' => 'EA',
+            'last_unit_price' => '3256.000',
+            'status' => 'active',
+        ]);
+        $second = QuotationItem::create([
+            'quotation_id' => $first['quotation']->id,
+            'product_id' => $secondProduct->id,
+            'manufacturer_id' => $context['manufacturer']->id,
+            'line_number' => 2,
+            'product_name' => $secondProduct->name,
+            'title' => $secondProduct->title,
+            'buyer_description' => $secondProduct->buyer_description,
+            'manufacturer_description' => $secondProduct->manufacturer_description,
+            'quantity' => '1.000',
+            'uom' => 'EA',
+            'unit_price' => '3256.000',
+            'total_price' => '3256.000',
+        ]);
+        $supplierPo = $this->createSupplierPo($context, [$first['item'], $second]);
+
+        $followUpIds = DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->orderBy('quotation_item_id')
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        $this->withBearerToken($context['followUp'])
+            ->getJson('/api/follow-up/quotations')
+            ->assertOk()
+            ->assertJsonPath('data.0.quotation_id', $first['quotation']->id)
+            ->assertJsonPath('data.0.follow_up_items_count', 2)
+            ->assertJsonPath('data.0.open_groups_count', 2);
+
+        $detail = $this->withBearerToken($context['followUp'])
+            ->getJson("/api/follow-up/quotations/{$first['quotation']->id}")
+            ->assertOk()
+            ->assertJsonPath('data.quotation.id', $first['quotation']->id)
+            ->assertJsonPath('data.quotation.payment_term_days', 45)
+            ->assertJsonPath('data.quotation.incoterm_code', 'CPT')
+            ->assertJsonPath('data.items.0.id', $followUpIds[0])
+            ->assertJsonPath('data.items.1.id', $followUpIds[1]);
+
+        $this->assertCount(2, $detail->json('data.groups'));
+
+        $groupResponse = $this->postJson("/api/follow-up/quotations/{$first['quotation']->id}/groups", [
+            'group_name' => 'ABB shared shipment',
+            'workflow_mode' => 'shared',
+            'follow_up_item_ids' => $followUpIds,
+        ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Follow-up group saved.')
+            ->assertJsonPath('data.groups.0.group_name', 'ABB shared shipment')
+            ->assertJsonPath('data.groups.0.workflow_mode', 'shared')
+            ->assertJsonPath('data.groups.0.item_count', 2);
+
+        $groupKey = $groupResponse->json('data.groups.0.group_key');
+        $this->assertNotEmpty($groupKey);
+
+        foreach ($followUpIds as $id) {
+            $this->assertDatabaseHas('follow_up_items', [
+                'id' => $id,
+                'follow_up_group_key' => $groupKey,
+                'follow_up_group_name' => 'ABB shared shipment',
+                'follow_up_group_mode' => 'shared',
+            ]);
+        }
+
+        $this->deleteJson("/api/follow-up/quotations/{$first['quotation']->id}/groups/{$groupKey}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Follow-up group split into individual items.')
+            ->assertJsonPath('data.groups.0.workflow_mode', 'individual')
+            ->assertJsonPath('data.groups.1.workflow_mode', 'individual');
+
+        foreach ($followUpIds as $id) {
+            $this->assertDatabaseHas('follow_up_items', [
+                'id' => $id,
+                'follow_up_group_key' => null,
+                'follow_up_group_name' => null,
+                'follow_up_group_mode' => 'individual',
+            ]);
+        }
+    }
+
     public function test_notifications_return_actionable_follow_up_alerts_with_clean_labels(): void
     {
         Storage::disk('local')->deleteDirectory('generated/supplier-pos');
@@ -236,21 +330,21 @@ class FollowUpWorkflowTest extends TestCase
             Carbon::setTestNow(Carbon::parse('2026-06-05 09:00:00'));
 
             $this->putJson("/api/follow-up/{$followUpItemId}/reminder", [
-                    'reminder_interval_value' => 2,
-                    'reminder_interval_unit' => 'weeks',
-                ])
+                'reminder_interval_value' => 2,
+                'reminder_interval_unit' => 'weeks',
+            ])
                 ->assertOk()
                 ->assertJsonPath('data.next_follow_up_at', '2026-06-19 09:00:00');
 
             Carbon::setTestNow(Carbon::parse('2026-06-07 11:30:00'));
 
             $this->postJson("/api/follow-up/{$followUpItemId}/comments", [
-                    'comment' => 'Sent email to ABB requesting order acknowledgement.',
-                    'stage' => 'acknowledgement',
-                    'communication_type' => 'email',
-                    'contacted_person' => 'Omid',
-                    'next_action' => 'Wait for acknowledgement copy.',
-                ])
+                'comment' => 'Sent email to ABB requesting order acknowledgement.',
+                'stage' => 'acknowledgement',
+                'communication_type' => 'email',
+                'contacted_person' => 'Omid',
+                'next_action' => 'Wait for acknowledgement copy.',
+            ])
                 ->assertCreated()
                 ->assertJsonPath('data.latest_comment.comment', 'Sent email to ABB requesting order acknowledgement.')
                 ->assertJsonPath('data.latest_comment.stage', 'acknowledgement')
@@ -259,10 +353,10 @@ class FollowUpWorkflowTest extends TestCase
             $file = UploadedFile::fake()->create('abb-acknowledgement.pdf', 24, 'application/pdf');
 
             $this->post("/api/follow-up/{$followUpItemId}/acknowledgement", [
-                    'acknowledgement_received_at' => '2026-06-08 10:15:00',
-                    'acknowledgement_notes' => 'ABB acknowledged the PO by email.',
-                    'acknowledgement_file' => $file,
-                ])
+                'acknowledgement_received_at' => '2026-06-08 10:15:00',
+                'acknowledgement_notes' => 'ABB acknowledged the PO by email.',
+                'acknowledgement_file' => $file,
+            ])
                 ->assertOk()
                 ->assertJsonPath('data.status', 'acknowledged')
                 ->assertJsonPath('data.acknowledged_by_name', $context['followUp']->name)
@@ -341,17 +435,31 @@ class FollowUpWorkflowTest extends TestCase
 
         $this->assertSame([
             'supplier_invoice',
-            'bill_of_lading',
-            'airway_bill',
             'certificate_of_origin',
             'packing_list',
+            'bill_of_lading',
+            'airway_bill',
+            'land_transport',
+            'carrier',
         ], collect($documents)->pluck('document_type')->all());
+
+        $this->assertSame([
+            'supplier_invoice' => true,
+            'certificate_of_origin' => true,
+            'packing_list' => true,
+            'bill_of_lading' => false,
+            'airway_bill' => false,
+            'land_transport' => false,
+            'carrier' => false,
+        ], collect($documents)->mapWithKeys(fn (array $document): array => [
+            $document['document_type'] => $document['is_required'],
+        ])->all());
 
         $this->postJson("/api/follow-up/{$followUpItemId}/shipping-documents/complete")
             ->assertStatus(422)
             ->assertJsonValidationErrors(['shipping_documents']);
 
-        foreach (['supplier_invoice', 'bill_of_lading', 'airway_bill', 'certificate_of_origin'] as $documentType) {
+        foreach (['supplier_invoice', 'certificate_of_origin'] as $documentType) {
             $file = UploadedFile::fake()->create("{$documentType}.pdf", 18, 'application/pdf');
 
             $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/{$documentType}", [
@@ -364,9 +472,32 @@ class FollowUpWorkflowTest extends TestCase
                 ->assertJsonPath('data.status', 'uploaded');
         }
 
+        $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/land_transport", [
+            'document_file' => UploadedFile::fake()->create('land-transport.pdf', 18, 'application/pdf'),
+            'document_number' => 'LTR-001',
+            'document_date' => '2026-06-10',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.document_type', 'land_transport')
+            ->assertJsonPath('data.label', 'Land Transport')
+            ->assertJsonPath('data.is_required', false);
+
         $this->postJson("/api/follow-up/{$followUpItemId}/shipping-documents/complete")
             ->assertStatus(422)
             ->assertJsonValidationErrors(['shipping_documents']);
+
+        $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/packing_list", [
+            'document_file' => UploadedFile::fake()->create('carrier-packing-list.pdf', 18, 'application/pdf'),
+            'document_number' => 'PL-ABB-001',
+            'document_date' => '2026-06-10',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.document_type', 'packing_list')
+            ->assertJsonPath('data.status', 'uploaded');
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/shipping-documents/complete")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'shipping_documents_complete');
     }
 
     public function test_shipping_document_uploads_are_audited_with_elapsed_time_between_progress_events(): void
@@ -493,7 +624,7 @@ class FollowUpWorkflowTest extends TestCase
         ])->assertOk();
 
         foreach ([
-            'packing_list.generated',
+            'shipping_document.uploaded',
             'shipping_documents.completed',
             'logistics.eta_recorded',
             'logistics.arrived',
@@ -505,7 +636,7 @@ class FollowUpWorkflowTest extends TestCase
         }
     }
 
-    public function test_follow_up_user_can_generate_packing_list_and_complete_shipping_documents(): void
+    public function test_follow_up_user_can_upload_carrier_packing_list_and_complete_shipping_documents(): void
     {
         Storage::disk('local')->deleteDirectory('follow-up');
         Storage::disk('local')->deleteDirectory('generated/supplier-pos');
@@ -519,7 +650,16 @@ class FollowUpWorkflowTest extends TestCase
 
         $this->withBearerToken($context['followUp']);
 
-        foreach (['supplier_invoice', 'bill_of_lading', 'airway_bill', 'certificate_of_origin'] as $documentType) {
+        $this->postJson("/api/follow-up/{$followUpItemId}/packing-list", [
+            'package_size' => '120*80*956 CM',
+            'gross_weight' => '330 Kg',
+            'net_weight' => '300 Kg',
+            'remarks' => 'Single packed motor.',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['packing_list']);
+
+        foreach (['supplier_invoice', 'certificate_of_origin'] as $documentType) {
             $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/{$documentType}", [
                 'document_file' => UploadedFile::fake()->create("{$documentType}.pdf", 18, 'application/pdf'),
                 'document_number' => strtoupper($documentType).'-001',
@@ -527,43 +667,28 @@ class FollowUpWorkflowTest extends TestCase
             ])->assertOk();
         }
 
-        $response = $this->postJson("/api/follow-up/{$followUpItemId}/packing-list", [
-            'package_size' => '120*80*956 CM',
-            'gross_weight' => '330 Kg',
-            'net_weight' => '300 Kg',
-            'remarks' => 'Single packed motor.',
-        ]);
-
-        $response->assertCreated()
-            ->assertJsonPath('data.package_size', '120*80*956 CM')
-            ->assertJsonPath('data.gross_weight', '330 Kg')
-            ->assertJsonPath('data.net_weight', '300 Kg')
-            ->assertJsonPath('data.items.0.buyer_po_number', '4502757812')
-            ->assertJsonPath('data.downloads.docx', "/api/packing-lists/{$response->json('data.id')}/download/docx")
-            ->assertJsonPath('data.downloads.pdf', "/api/packing-lists/{$response->json('data.id')}/download/pdf");
+        $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/packing_list", [
+            'document_file' => UploadedFile::fake()->create('abb-carrier-packing-list.pdf', 18, 'application/pdf'),
+            'document_number' => 'PL-ABB-001',
+            'document_date' => '2026-06-10',
+            'remarks' => 'Packing list received from shipping carrier.',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Packing List uploaded.')
+            ->assertJsonPath('data.document_type', 'packing_list')
+            ->assertJsonPath('data.status', 'uploaded')
+            ->assertJsonPath('complete', true);
 
         $this->assertDatabaseHas('shipping_documents', [
             'follow_up_item_id' => $followUpItemId,
             'document_type' => 'packing_list',
-            'status' => 'generated',
+            'status' => 'uploaded',
+            'original_file_name' => 'abb-carrier-packing-list.pdf',
         ]);
 
-        $docxPath = Storage::disk('local')->path($response->json('data.docx_path'));
-        $pdfPath = Storage::disk('local')->path($response->json('data.pdf_path'));
-
-        $this->assertFileExists($docxPath);
-        $this->assertFileExists($pdfPath);
-        $this->assertStringStartsWith('%PDF', file_get_contents($pdfPath));
-
-        $zip = new ZipArchive;
-        $this->assertTrue($zip->open($docxPath));
-        $documentXml = $zip->getFromName('word/document.xml');
-        $zip->close();
-
-        $this->assertStringContainsString('Packing List', (string) $documentXml);
-        $this->assertStringContainsString('4502757812', (string) $documentXml);
-        $this->assertStringContainsString('120*80*956 CM', (string) $documentXml);
-        $this->assertStringContainsString('330 Kg', (string) $documentXml);
+        $this->assertDatabaseMissing('packing_lists', [
+            'follow_up_item_id' => $followUpItemId,
+        ]);
 
         $this->postJson("/api/follow-up/{$followUpItemId}/shipping-documents/complete")
             ->assertOk()
@@ -620,20 +745,20 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.logistics_case.events.0.event_type', 'eta_recorded');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/logistics/arrived", [
-                'arrived_at' => '2026-06-20 14:30:00',
-                'remarks' => 'Shipment reached Muscat airport.',
-            ])
+            'arrived_at' => '2026-06-20 14:30:00',
+            'remarks' => 'Shipment reached Muscat airport.',
+        ])
             ->assertOk()
             ->assertJsonPath('data.status', 'arrived')
             ->assertJsonPath('data.logistics_case.status', 'arrived');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/logistics/warehouse-received", [
-                'warehouse_received_at' => '2026-06-21 09:15:00',
-                'received_location' => 'ISC Warehouse - Muscat',
-                'received_quantity' => '1',
-                'goods_condition' => 'Good condition',
-                'remarks' => 'Ready for delivery order preparation.',
-            ])
+            'warehouse_received_at' => '2026-06-21 09:15:00',
+            'received_location' => 'ISC Warehouse - Muscat',
+            'received_quantity' => '1',
+            'goods_condition' => 'Good condition',
+            'remarks' => 'Ready for delivery order preparation.',
+        ])
             ->assertOk()
             ->assertJsonPath('data.status', 'ready_for_delivery_order')
             ->assertJsonPath('data.logistics_case.status', 'warehouse_received')
@@ -670,19 +795,19 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.logistics_case.delivery_responsibility', 'buyer_agent');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/logistics/documents-sent", [
-                'documents_sent_at' => '2026-06-15 10:00:00',
-                'remarks' => 'Full shipping document set sent to buyer agent.',
-            ])
+            'documents_sent_at' => '2026-06-15 10:00:00',
+            'remarks' => 'Full shipping document set sent to buyer agent.',
+        ])
             ->assertOk()
             ->assertJsonPath('data.status', 'documents_sent_to_buyer_agent')
             ->assertJsonPath('data.logistics_case.status', 'documents_sent_to_buyer_agent');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/logistics/buyer-received", [
-                'buyer_received_at' => '2026-06-28 16:45:00',
-                'received_quantity' => '1',
-                'goods_condition' => 'Received without shortage or damage',
-                'remarks' => 'Buyer confirmed receipt by email.',
-            ])
+            'buyer_received_at' => '2026-06-28 16:45:00',
+            'received_quantity' => '1',
+            'goods_condition' => 'Received without shortage or damage',
+            'remarks' => 'Buyer confirmed receipt by email.',
+        ])
             ->assertOk()
             ->assertJsonPath('data.status', 'ready_for_invoice')
             ->assertJsonPath('data.logistics_case.status', 'buyer_received');
@@ -690,6 +815,61 @@ class FollowUpWorkflowTest extends TestCase
         $this->assertDatabaseHas('logistics_events', [
             'event_type' => 'buyer_received',
             'title' => 'Buyer confirmed goods received',
+        ]);
+    }
+
+    public function test_supplier_responsibility_uses_supplier_receipt_before_invoice_without_delivery_order(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+        Storage::disk('local')->deleteDirectory('generated/packing-lists');
+        Storage::disk('local')->deleteDirectory('generated/invoices');
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $first['quotation']->forceFill(['delivery_responsibility' => 'supplier'])->save();
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $this->completeShippingDocumentsFor($context, $followUpItemId);
+
+        $this->withBearerToken($context['followUp'])
+            ->getJson("/api/follow-up/{$followUpItemId}")
+            ->assertOk()
+            ->assertJsonPath('data.quotation_delivery_responsibility', 'supplier');
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/eta", [
+            'delivery_responsibility' => 'supplier',
+            'eta_at' => '2026-06-25 12:00:00',
+            'agent_name' => 'ABB Factory Dispatch',
+            'agent_contact' => 'Supplier logistics desk',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.logistics_case.delivery_responsibility', 'supplier');
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/arrived", [
+            'arrived_at' => '2026-06-26 11:15:00',
+            'remarks' => 'Supplier confirmed the goods were received and ready for invoice.',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'ready_for_invoice')
+            ->assertJsonPath('data.logistics_case.status', 'supplier_received')
+            ->assertJsonPath('data.logistics_case.arrived_at', '2026-06-26 11:15:00')
+            ->assertJsonPath('data.delivery_order', null);
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/invoice", [
+            'payment_term_days' => 45,
+            'vat_rate' => '5',
+            'bank_details' => "Bank Muscat\nAccount: 0123456789",
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'invoice_created')
+            ->assertJsonPath('data.invoice.delivery_order_reference', null);
+
+        $this->assertDatabaseHas('logistics_events', [
+            'event_type' => 'supplier_received',
+            'title' => 'Supplier confirmed receipt',
         ]);
     }
 
@@ -757,9 +937,9 @@ class FollowUpWorkflowTest extends TestCase
         $deliveryOrderId = (int) $response->json('data.delivery_order.id');
 
         $this->post("/api/follow-up/{$followUpItemId}/delivery-order/signed", [
-                'signed_at' => '2026-06-22 13:30:00',
-                'signed_file' => UploadedFile::fake()->create('signed-delivery-order.pdf', 20, 'application/pdf'),
-            ])
+            'signed_at' => '2026-06-22 13:30:00',
+            'signed_file' => UploadedFile::fake()->create('signed-delivery-order.pdf', 20, 'application/pdf'),
+        ])
             ->assertOk()
             ->assertJsonPath('data.status', 'ready_for_invoice')
             ->assertJsonPath('data.delivery_order.status', 'signed');
@@ -796,10 +976,10 @@ class FollowUpWorkflowTest extends TestCase
         $this->moveIscItemToReadyForInvoice($context, $followUpItemId);
 
         $this->postJson("/api/follow-up/{$followUpItemId}/invoice", [
-                'payment_term_days' => 45,
-                'vat_rate' => '5',
-                'vat_amount' => '0',
-            ])
+            'payment_term_days' => 45,
+            'vat_rate' => '5',
+            'vat_amount' => '0',
+        ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['vat_amount']);
     }
@@ -825,11 +1005,11 @@ class FollowUpWorkflowTest extends TestCase
             Carbon::setTestNow(Carbon::parse('2026-06-30 10:00:00'));
 
             $response = $this->postJson("/api/follow-up/{$followUpItemId}/invoice", [
-                    'payment_term_days' => 45,
-                    'vat_rate' => '5',
-                    'bank_details' => "Bank Muscat\nAccount: 0123456789",
-                    'remarks' => 'Invoice issued after signed delivery order.',
-                ]);
+                'payment_term_days' => 45,
+                'vat_rate' => '5',
+                'bank_details' => "Bank Muscat\nAccount: 0123456789",
+                'remarks' => 'Invoice issued after signed delivery order.',
+            ]);
         } finally {
             Carbon::setTestNow();
         }
@@ -859,6 +1039,35 @@ class FollowUpWorkflowTest extends TestCase
         $this->assertStringContainsString('Tax Invoice', (string) $documentXml);
         $this->assertStringContainsString('4502757812', (string) $documentXml);
         $this->assertStringContainsString('3418.800', (string) $documentXml);
+    }
+
+    public function test_invoice_uses_vat_percentage_from_quotation_item(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+        Storage::disk('local')->deleteDirectory('generated/packing-lists');
+        Storage::disk('local')->deleteDirectory('generated/delivery-orders');
+        Storage::disk('local')->deleteDirectory('generated/invoices');
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $first['item']->forceFill(['vat_rate' => '12.500'])->save();
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $this->moveIscItemToReadyForInvoice($context, $followUpItemId);
+
+        $this->withBearerToken($context['followUp'])
+            ->postJson("/api/follow-up/{$followUpItemId}/invoice", [
+                'payment_term_days' => 45,
+                'bank_details' => "Bank Muscat\nAccount: 0123456789",
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.invoice.subtotal', '3256.000')
+            ->assertJsonPath('data.invoice.vat_rate', '12.500')
+            ->assertJsonPath('data.invoice.vat_amount', '407.000')
+            ->assertJsonPath('data.invoice.total_amount', '3663.000');
     }
 
     public function test_payment_cannot_be_recorded_before_invoice_exists(): void
@@ -908,11 +1117,11 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.invoice.balance_amount', '3418.800');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/payments", [
-                'amount' => '1000.000',
-                'payment_date' => '2026-07-15',
-                'payment_reference' => 'TRN-PART-001',
-                'remarks' => 'First partial payment.',
-            ])
+            'amount' => '1000.000',
+            'payment_date' => '2026-07-15',
+            'payment_reference' => 'TRN-PART-001',
+            'remarks' => 'First partial payment.',
+        ])
             ->assertCreated()
             ->assertJsonPath('data.status', 'partially_paid')
             ->assertJsonPath('data.invoice.status', 'partially_paid')
@@ -922,19 +1131,19 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.invoice.payments.0.payment_reference', 'TRN-PART-001');
 
         $this->postJson("/api/follow-up/{$followUpItemId}/payments", [
-                'amount' => '3000.000',
-                'payment_date' => '2026-07-20',
-                'payment_reference' => 'TRN-OVERPAY',
-            ])
+            'amount' => '3000.000',
+            'payment_date' => '2026-07-20',
+            'payment_reference' => 'TRN-OVERPAY',
+        ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['amount']);
 
         $this->postJson("/api/follow-up/{$followUpItemId}/payments", [
-                'amount' => '2418.800',
-                'payment_date' => '2026-07-25',
-                'payment_reference' => 'TRN-FINAL-001',
-                'remarks' => 'Final settlement.',
-            ])
+            'amount' => '2418.800',
+            'payment_date' => '2026-07-25',
+            'payment_reference' => 'TRN-FINAL-001',
+            'remarks' => 'Final settlement.',
+        ])
             ->assertCreated()
             ->assertJsonPath('data.status', 'paid')
             ->assertJsonPath('data.invoice.status', 'paid')
@@ -966,8 +1175,8 @@ class FollowUpWorkflowTest extends TestCase
         $this->withBearerToken($context['followUp']);
 
         $this->postJson("/api/follow-up/{$followUpItemId}/close", [
-                'closed_notes' => 'Trying to close before payment.',
-            ])
+            'closed_notes' => 'Trying to close before payment.',
+        ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['payment']);
 
@@ -1173,6 +1382,7 @@ class FollowUpWorkflowTest extends TestCase
             'uom' => 'EA',
             'unit_price' => '3256.000',
             'total_price' => '3256.000',
+            'vat_rate' => '5.000',
         ]);
         $version = QuotationVersion::create([
             'quotation_id' => $quotation->id,
@@ -1202,8 +1412,7 @@ class FollowUpWorkflowTest extends TestCase
     }
 
     /**
-     * @param array<int, QuotationItem> $items
-     *
+     * @param  array<int, QuotationItem>  $items
      * @return array<string, mixed>
      */
     private function createSupplierPo(array $context, array $items): array
@@ -1241,20 +1450,13 @@ class FollowUpWorkflowTest extends TestCase
     {
         $this->withBearerToken($context['followUp']);
 
-        foreach (['supplier_invoice', 'bill_of_lading', 'airway_bill', 'certificate_of_origin'] as $documentType) {
+        foreach (['supplier_invoice', 'certificate_of_origin', 'packing_list'] as $documentType) {
             $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/{$documentType}", [
                 'document_file' => UploadedFile::fake()->create("{$documentType}.pdf", 18, 'application/pdf'),
                 'document_number' => strtoupper($documentType).'-001',
                 'document_date' => '2026-06-10',
             ])->assertOk();
         }
-
-        $this->postJson("/api/follow-up/{$followUpItemId}/packing-list", [
-            'package_size' => '120*80*956 CM',
-            'gross_weight' => '330 Kg',
-            'net_weight' => '300 Kg',
-            'remarks' => 'Single packed motor.',
-        ])->assertCreated();
 
         $this->postJson("/api/follow-up/{$followUpItemId}/shipping-documents/complete")
             ->assertOk()

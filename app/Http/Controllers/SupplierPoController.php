@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Currency;
 use App\Models\Incoterm;
 use App\Models\QuotationActivityLog;
 use App\Models\QuotationItem;
@@ -15,6 +16,7 @@ use App\Services\SupplierPoDocumentService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -28,7 +30,7 @@ class SupplierPoController extends Controller
 
     private const DELIVERY_TYPES = ['working', 'calendar'];
 
-    private const CURRENCIES = ['OMR', 'USD', 'EUR', 'GBP'];
+    private const DEFAULT_CURRENCIES = ['OMR', 'USD', 'EUR', 'GBP'];
 
     private const DEFAULT_TERMS = [
         ['key' => 'acknowledgment', 'title' => 'Acknowledgment'],
@@ -66,6 +68,7 @@ class SupplierPoController extends Controller
         $selectedSupplier = $request->filled('supplier_id')
             ? $this->activeSupplierQuery()->findOrFail($request->integer('supplier_id'))
             : null;
+        $pendingItemFilters = $this->pendingItemFilters($request);
 
         return response()->json([
             'buyer' => $this->resolveInternalBuyer($request),
@@ -83,10 +86,7 @@ class SupplierPoController extends Controller
                 ->where('status', 'active')
                 ->orderBy('code')
                 ->get(['id', 'code', 'name']),
-            'currencies' => collect(self::CURRENCIES)->map(fn (string $currency): array => [
-                'id' => $currency,
-                'name' => $currency,
-            ])->values(),
+            'currencies' => $this->currencyOptions(),
             'period_units' => collect(self::PERIOD_UNITS)->map(fn (string $unit): array => [
                 'id' => $unit,
                 'name' => Str::ucfirst($unit),
@@ -95,7 +95,8 @@ class SupplierPoController extends Controller
                 'id' => $type,
                 'name' => Str::ucfirst($type),
             ])->values(),
-            'pending_items' => $this->pendingItems($selectedSupplier)->get()->map(fn (QuotationItem $item): array => $this->transformPendingItem($item))->values(),
+            'pending_items' => $this->pendingItems($selectedSupplier, null, $pendingItemFilters)->get()->map(fn (QuotationItem $item): array => $this->transformPendingItem($item))->values(),
+            'pending_item_filters' => $this->pendingItemFilterOptions($selectedSupplier),
             'term_defaults' => self::DEFAULT_TERMS,
         ]);
     }
@@ -117,7 +118,7 @@ class SupplierPoController extends Controller
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
             'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
-            'accepted_invoice_currency' => ['required', Rule::in(self::CURRENCIES)],
+            'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
                 'nullable',
                 'integer',
@@ -321,7 +322,7 @@ class SupplierPoController extends Controller
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
             'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
-            'accepted_invoice_currency' => ['required', Rule::in(self::CURRENCIES)],
+            'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
                 'nullable',
                 'integer',
@@ -502,7 +503,47 @@ class SupplierPoController extends Controller
         ]);
     }
 
-    private function pendingItems(?Supplier $supplier = null, ?SupplierPo $supplierPo = null): Builder
+    /**
+     * @return Collection<int, array{id: string, code: string, name: string, exchange_rate?: string|null}>
+     */
+    private function currencyOptions(): Collection
+    {
+        $configured = Currency::query()
+            ->where('status', 'active')
+            ->orderBy('code')
+            ->get(['code', 'name', 'exchange_rate'])
+            ->map(fn (Currency $currency): array => [
+                'id' => $currency->code,
+                'code' => $currency->code,
+                'name' => $currency->name,
+                'exchange_rate' => $currency->exchange_rate,
+            ]);
+
+        $defaults = collect(self::DEFAULT_CURRENCIES)->map(fn (string $currency): array => [
+            'id' => $currency,
+            'code' => $currency,
+            'name' => $currency,
+            'exchange_rate' => null,
+        ]);
+
+        return $configured->concat($defaults)->unique('id')->values();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function currencyCodes(): array
+    {
+        return $this->currencyOptions()
+            ->pluck('id')
+            ->map(fn (mixed $currency): string => (string) $currency)
+            ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    private function pendingItems(?Supplier $supplier = null, ?SupplierPo $supplierPo = null, array $filters = []): Builder
     {
         $query = QuotationItem::query()
             ->with(['manufacturer', 'quotation.buyerCompany', 'quotation.buyerPos'])
@@ -520,7 +561,107 @@ class SupplierPoController extends Controller
             $query->where('manufacturer_id', $supplier->manufacturer_id);
         }
 
+        $search = trim((string) ($filters['search'] ?? ''));
+        if ($search !== '') {
+            $query->where(function (Builder $builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder
+                    ->where('product_name', 'like', $like)
+                    ->orWhere('title', 'like', $like)
+                    ->orWhere('buyer_description', 'like', $like)
+                    ->orWhere('manufacturer_description', 'like', $like)
+                    ->orWhereHas('manufacturer', fn (Builder $manufacturerQuery) => $manufacturerQuery->where('name', 'like', $like))
+                    ->orWhereHas('quotation', fn (Builder $quotationQuery) => $quotationQuery
+                        ->where('quotation_reference', 'like', $like)
+                        ->orWhere('rfq_number', 'like', $like)
+                        ->orWhere('pr_number', 'like', $like)
+                        ->orWhereHas('buyerCompany', fn (Builder $buyerQuery) => $buyerQuery
+                            ->where('name', 'like', $like)
+                            ->orWhere('company_code', 'like', $like))
+                        ->orWhereHas('buyerPos', fn (Builder $buyerPoQuery) => $buyerPoQuery->where('po_number', 'like', $like)));
+            });
+        }
+
+        $quotationReference = trim((string) ($filters['quotation_reference'] ?? ''));
+        if ($quotationReference !== '') {
+            $query->whereHas('quotation', fn (Builder $quotationQuery) => $quotationQuery->where('quotation_reference', 'like', '%'.$quotationReference.'%'));
+        }
+
+        if (filled($filters['buyer_id'] ?? null)) {
+            $query->whereHas('quotation', fn (Builder $quotationQuery) => $quotationQuery->where('buyer_company_id', (int) $filters['buyer_id']));
+        }
+
+        if (filled($filters['manufacturer_id'] ?? null)) {
+            $query->where('manufacturer_id', (int) $filters['manufacturer_id']);
+        }
+
+        if (filled($filters['buyer_po_date_from'] ?? null)) {
+            $query->whereHas('quotation.buyerPos', fn (Builder $buyerPoQuery) => $buyerPoQuery->whereDate('po_date', '>=', (string) $filters['buyer_po_date_from']));
+        }
+
+        if (filled($filters['buyer_po_date_to'] ?? null)) {
+            $query->whereHas('quotation.buyerPos', fn (Builder $buyerPoQuery) => $buyerPoQuery->whereDate('po_date', '<=', (string) $filters['buyer_po_date_to']));
+        }
+
+        if ((bool) ($filters['current_only'] ?? false)) {
+            $query->whereHas('quotation', fn (Builder $quotationQuery) => $quotationQuery->whereNotIn('status', ['closed', 'cancelled', 'rejected', 'lost']));
+        }
+
         return $query;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pendingItemFilters(Request $request): array
+    {
+        return [
+            'search' => trim((string) $request->query('search', '')),
+            'quotation_reference' => trim((string) $request->query('quotation_reference', '')),
+            'buyer_id' => $request->filled('buyer_id') ? $request->integer('buyer_id') : null,
+            'manufacturer_id' => $request->filled('manufacturer_id') ? $request->integer('manufacturer_id') : null,
+            'buyer_po_date_from' => $request->filled('buyer_po_date_from') ? (string) $request->query('buyer_po_date_from') : null,
+            'buyer_po_date_to' => $request->filled('buyer_po_date_to') ? (string) $request->query('buyer_po_date_to') : null,
+            'current_only' => $request->boolean('current_only'),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pendingItemFilterOptions(?Supplier $supplier): array
+    {
+        $items = $this->pendingItems($supplier)->get();
+
+        return [
+            'buyers' => $items
+                ->map(fn (QuotationItem $item): ?array => $item->quotation?->buyerCompany ? [
+                    'value' => (string) $item->quotation->buyerCompany->id,
+                    'label' => $item->quotation->buyerCompany->name,
+                ] : null)
+                ->filter()
+                ->unique('value')
+                ->sortBy('label')
+                ->values(),
+            'manufacturers' => $items
+                ->map(fn (QuotationItem $item): ?array => $item->manufacturer ? [
+                    'value' => (string) $item->manufacturer->id,
+                    'label' => $item->manufacturer->name,
+                ] : null)
+                ->filter()
+                ->unique('value')
+                ->sortBy('label')
+                ->values(),
+            'quotations' => $items
+                ->map(fn (QuotationItem $item): ?array => $item->quotation ? [
+                    'value' => (string) $item->quotation->quotation_reference,
+                    'label' => $item->quotation->quotation_reference,
+                ] : null)
+                ->filter()
+                ->unique('value')
+                ->sortBy('label')
+                ->values(),
+        ];
     }
 
     private function writeDocuments(SupplierPo $supplierPo, SupplierPoDocumentService $documents): void
@@ -672,9 +813,12 @@ class SupplierPoController extends Controller
             'quotation_item_id' => $item->id,
             'quotation_id' => $item->quotation_id,
             'quotation_reference' => $item->quotation?->quotation_reference,
+            'quotation_status' => $item->quotation?->status,
+            'quotation_closing_at' => $item->quotation?->closing_at?->toDateTimeString(),
             'buyer_company_name' => $item->quotation?->buyerCompany?->name,
             'buyer_po_id' => $buyerPo?->id,
             'buyer_po_number' => $buyerPo?->po_number,
+            'buyer_po_date' => $buyerPo?->po_date?->toDateString(),
             'manufacturer_id' => $item->manufacturer_id,
             'manufacturer_name' => $item->manufacturer?->name,
             'product_name' => $item->product_name,
