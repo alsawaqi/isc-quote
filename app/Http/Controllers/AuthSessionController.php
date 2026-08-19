@@ -9,6 +9,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -17,18 +19,32 @@ class AuthSessionController extends Controller
     public function store(Request $request, JwtTokenService $tokens, JwtRefreshTokenService $refreshTokens): JsonResponse
     {
         $credentials = $request->validate([
-            'email' => ['required', 'email'],
+            'email' => ['required', 'email', 'max:255'],
             'password' => ['required', 'string'],
             'remember' => ['sometimes', 'boolean'],
         ]);
+        $throttleKey = 'login|'.hash('sha256', Str::lower($credentials['email']).'|'.$request->ip());
+        $ipThrottleKey = 'login-ip|'.hash('sha256', (string) $request->ip());
+
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)
+            || RateLimiter::tooManyAttempts($ipThrottleKey, 30)) {
+            return response()->json([
+                'message' => 'Too many login attempts. Please try again shortly.',
+            ], 429);
+        }
 
         $user = User::with(['roles.permissions', 'permissions', 'contact.company'])->where('email', $credentials['email'])->first();
 
-        if (! $user || ! Hash::check($credentials['password'], $user->password)) {
+        if (! $user || $user->status !== 'active' || ! Hash::check($credentials['password'], $user->password)) {
+            RateLimiter::hit($throttleKey, 60);
+            RateLimiter::hit($ipThrottleKey, 60);
+
             throw ValidationException::withMessages([
                 'email' => 'The provided credentials do not match our records.',
             ]);
         }
+
+        RateLimiter::clear($throttleKey);
 
         $remember = (bool) ($credentials['remember'] ?? false);
         $refreshToken = $refreshTokens->issue($user, $remember);

@@ -17,6 +17,7 @@ class FollowUpItem extends Model
         'supplier_po_id',
         'quotation_id',
         'buyer_po_id',
+        'buyer_po_item_id',
         'quotation_item_id',
         'follow_up_group_key',
         'follow_up_group_name',
@@ -67,6 +68,11 @@ class FollowUpItem extends Model
         return $this->belongsTo(BuyerPo::class);
     }
 
+    public function buyerPoItem(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPoItem::class);
+    }
+
     public function quotationItem(): BelongsTo
     {
         return $this->belongsTo(QuotationItem::class);
@@ -112,18 +118,38 @@ class FollowUpItem extends Model
         return $this->hasOne(LogisticsCase::class);
     }
 
+    public function itemFulfilment(): HasOne
+    {
+        return $this->hasOne(ItemFulfilment::class);
+    }
+
     public function deliveryOrder(): HasOne
     {
-        return $this->hasOne(DeliveryOrder::class);
+        return $this->hasOne(DeliveryOrder::class)->latestOfMany();
+    }
+
+    public function deliveryOrders(): HasMany
+    {
+        return $this->hasMany(DeliveryOrder::class)->latest('delivery_order_date')->latest('id');
     }
 
     public function invoice(): HasOne
     {
-        return $this->hasOne(Invoice::class);
+        return $this->hasOne(Invoice::class)->latestOfMany();
+    }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class)->latest('invoice_date')->latest('id');
     }
 
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function paymentPlanFollowUps(): HasMany
+    {
+        return $this->hasMany(PaymentPlanFollowUp::class)->oldest('id');
     }
 }

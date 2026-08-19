@@ -154,6 +154,7 @@ class DashboardApiTest extends TestCase
         ]);
         $product = Product::create([
             'manufacturer_id' => $context['manufacturer']->id,
+            'product_code' => "{$buyerCode}-MOTOR",
             'name' => "{$buyerCode} Motor",
             'title' => "{$buyerCode} Motor",
             'buyer_description' => '<p>Buyer visible description.</p>',
@@ -167,6 +168,7 @@ class DashboardApiTest extends TestCase
             'product_id' => $product->id,
             'manufacturer_id' => $context['manufacturer']->id,
             'line_number' => 1,
+            'product_code' => "{$buyerCode}-MOTOR",
             'product_name' => $product->name,
             'title' => $product->title,
             'buyer_description' => $product->buyer_description,
@@ -239,6 +241,7 @@ class DashboardApiTest extends TestCase
             'product_id' => $item->product_id,
             'manufacturer_id' => $item->manufacturer_id,
             'line_number' => 1,
+            'product_code' => $item->product_code,
             'product_name' => $item->product_name,
             'title' => 'ABB Flameproof Motor',
             'item_description' => $item->manufacturer_description,

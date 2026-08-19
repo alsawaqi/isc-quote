@@ -20,15 +20,19 @@ class Quotation extends Model
         'buyer_contact_id',
         'rfq_number',
         'pr_number',
+        'rfq_title',
         'closing_at',
         'quotation_validity_value',
         'quotation_validity_unit',
         'payment_term_days',
+        'payment_terms_extra',
+        'payment_customer_type',
         'delivery_period_min',
         'delivery_period_max',
         'delivery_period_unit',
         'delivery_period_type',
         'accepted_invoice_currency',
+        'vat_pricing',
         'incoterm_id',
         'delivery_responsibility',
         'status',
@@ -80,9 +84,24 @@ class Quotation extends Model
         return $this->hasMany(QuotationItem::class);
     }
 
+    public function charges(): HasMany
+    {
+        return $this->hasMany(QuotationCharge::class)->orderBy('line_number');
+    }
+
+    public function discounts(): HasMany
+    {
+        return $this->hasMany(QuotationDiscount::class)->orderBy('line_number');
+    }
+
     public function terms(): HasMany
     {
         return $this->hasMany(QuotationTerm::class)->orderBy('line_number');
+    }
+
+    public function paymentSchedules(): HasMany
+    {
+        return $this->hasMany(QuotationPaymentSchedule::class)->orderBy('line_number');
     }
 
     public function versions(): HasMany
@@ -93,6 +112,16 @@ class Quotation extends Model
     public function buyerPos(): HasMany
     {
         return $this->hasMany(BuyerPo::class)->latest();
+    }
+
+    public function buyerPoItems(): HasMany
+    {
+        return $this->hasMany(BuyerPoItem::class);
+    }
+
+    public function itemFulfilments(): HasMany
+    {
+        return $this->hasMany(ItemFulfilment::class);
     }
 
     public function activityLogs(): HasMany

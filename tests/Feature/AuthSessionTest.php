@@ -66,6 +66,110 @@ class AuthSessionTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_inactive_user_cannot_log_in(): void
+    {
+        User::create([
+            'name' => 'Inactive User',
+            'email' => 'inactive@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'inactive',
+        ]);
+
+        $this->postJson('/api/login', [
+            'email' => 'inactive@example.test',
+            'password' => 'password',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('email');
+    }
+
+    public function test_deactivated_user_cannot_continue_using_an_existing_access_token(): void
+    {
+        $user = User::create([
+            'name' => 'Active User',
+            'email' => 'deactivate-access@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ])->json('token');
+
+        $user->forceFill(['status' => 'inactive'])->save();
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson('/api/me')
+            ->assertUnauthorized();
+    }
+
+    public function test_deactivated_user_cannot_rotate_an_existing_refresh_token(): void
+    {
+        $user = User::create([
+            'name' => 'Active User',
+            'email' => 'deactivate-refresh@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+
+        $refreshToken = $this->postJson('/api/login', [
+            'email' => $user->email,
+            'password' => 'password',
+            'remember' => true,
+        ])->json('refresh_token');
+
+        $user->forceFill(['status' => 'inactive'])->save();
+
+        $this->postJson('/api/token/refresh', [
+            'refresh_token' => $refreshToken,
+        ])->assertUnauthorized();
+
+        $this->assertDatabaseMissing('jwt_refresh_tokens', [
+            'user_id' => $user->id,
+            'revoked_at' => null,
+        ]);
+    }
+
+    public function test_login_attempts_are_rate_limited(): void
+    {
+        User::create([
+            'name' => 'Rate Limited User',
+            'email' => 'rate-limit@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/login', [
+                'email' => 'rate-limit@example.test',
+                'password' => 'wrong-password',
+            ])->assertStatus(422);
+        }
+
+        $this->postJson('/api/login', [
+            'email' => 'rate-limit@example.test',
+            'password' => 'wrong-password',
+        ])->assertStatus(429);
+    }
+
+    public function test_successful_logins_are_not_counted_as_failed_rate_limit_attempts(): void
+    {
+        User::create([
+            'name' => 'Frequent Login User',
+            'email' => 'frequent-login@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+
+        for ($attempt = 0; $attempt < 8; $attempt++) {
+            $this->postJson('/api/login', [
+                'email' => 'frequent-login@example.test',
+                'password' => 'password',
+            ])->assertOk();
+        }
+    }
+
     public function test_me_requires_an_authenticated_session(): void
     {
         $this->getJson('/api/me')->assertUnauthorized();

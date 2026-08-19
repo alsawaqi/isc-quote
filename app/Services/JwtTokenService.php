@@ -49,7 +49,6 @@ class JwtTokenService
 
         return RevokedJwtToken::query()
             ->where('jti', $jti)
-            ->where('expires_at', '>', Carbon::now())
             ->exists();
     }
 
@@ -65,7 +64,8 @@ class JwtTokenService
             ['jti' => $jti],
             [
                 'user_id' => isset($payload->sub) ? (int) $payload->sub : null,
-                'expires_at' => Carbon::createFromTimestamp((int) ($payload->exp ?? Carbon::now()->timestamp)),
+                'expires_at' => Carbon::createFromTimestampUTC((int) ($payload->exp ?? Carbon::now()->timestamp))
+                    ->setTimezone(config('app.timezone')),
                 'revoked_at' => Carbon::now(),
             ]
         );

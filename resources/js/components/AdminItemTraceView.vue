@@ -54,6 +54,7 @@ interface ItemTraceRecord {
     supplier_po_reference: string | null;
     supplier_company_name: string | null;
     manufacturer_name: string | null;
+    product_code: string | null;
     product_name: string | null;
     title: string | null;
     quantity: string;
@@ -304,7 +305,7 @@ onMounted(loadItems);
                 <div v-else-if="items.length === 0" class="crud-empty">No item trace records found.</div>
 
                 <div v-for="item in items" v-else :key="item.quotation_item_id" class="module-record trace-item-row">
-                    <strong class="job-ref">{{ item.title ?? item.product_name ?? '-' }}</strong>
+                    <strong class="job-ref">{{ item.product_code ? `${item.product_code} - ` : '' }}{{ item.title ?? item.product_name ?? '-' }}</strong>
                     <span>{{ item.quotation_reference ?? '-' }}</span>
                     <span>{{ item.buyer_po_number ?? '-' }}</span>
                     <span>{{ item.supplier_po_reference ?? '-' }}</span>

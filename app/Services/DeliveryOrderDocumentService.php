@@ -17,6 +17,8 @@ use PhpOffice\PhpWord\SimpleType\JcTable;
 
 class DeliveryOrderDocumentService
 {
+    public function __construct(private readonly DocumentPageLayout $pageLayout) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -29,6 +31,7 @@ class DeliveryOrderDocumentService
             'followUpItem.quotation.buyerContact.designation',
             'followUpItem.buyerPo',
             'items.buyerPo',
+            'items.buyerPoItem',
         ]);
 
         $followUpItem = $deliveryOrder->followUpItem;
@@ -59,12 +62,13 @@ class DeliveryOrderDocumentService
                 'quantity' => $this->money($item->quantity),
                 'uom' => $item->uom,
                 'buyer_po_number' => $item->buyerPo?->po_number,
+                'buyer_item_code' => $item->buyerPoItem?->buyer_item_code,
             ])->values()->all(),
         ];
     }
 
     /**
-     * @param array<string, mixed> $snapshot
+     * @param  array<string, mixed>  $snapshot
      */
     public function writeDocx(array $snapshot, string $storagePath): void
     {
@@ -72,35 +76,23 @@ class DeliveryOrderDocumentService
         Settings::setOutputEscapingEnabled(true);
 
         $phpWord = new PhpWord;
-        $phpWord->setDefaultFontName('Arial');
-        $phpWord->setDefaultFontSize(9);
-        $phpWord->addTableStyle('InfoTable', [
-            'borderColor' => 'BFBFBF',
-            'borderSize' => 6,
-            'cellMargin' => 120,
-            'alignment' => JcTable::CENTER,
-        ]);
-        $phpWord->addTableStyle('ItemsTable', [
-            'borderColor' => '8EA9DB',
-            'borderSize' => 6,
-            'cellMargin' => 100,
-            'alignment' => JcTable::CENTER,
-        ], [
+        $phpWord->setDefaultFontName('Calibri');
+        $phpWord->setDefaultFontSize(10);
+        $phpWord->addTableStyle('InfoTable', $this->pageLayout->tableStyle('BFBFBF', 120));
+        $phpWord->addTableStyle('ItemsTable', $this->pageLayout->tableStyle('8EA9DB', 100), [
             'bgColor' => 'D9D9D9',
         ]);
 
-        $section = $phpWord->addSection([
-            'marginTop' => 450,
-            'marginBottom' => 450,
-            'marginLeft' => 600,
-            'marginRight' => 600,
-        ]);
+        $section = $this->pageLayout->addWordSection(
+            $phpWord,
+            (string) $snapshot['delivery_order']['reference'],
+            $snapshot['supplier']['vat_tin'] ?? $snapshot['buyer']['vat_tin'] ?? null,
+        );
 
-        $this->addImageIfExists($section, 'quotation-assets/isc-header.jpeg', 742, null);
-        $section->addText('Delivery Order', ['bold' => true, 'size' => 15, 'color' => '1F4E79'], ['alignment' => Jc::CENTER, 'spaceAfter' => 120]);
+        $section->addText('Delivery Order', ['bold' => true, 'size' => 16, 'color' => '1F4E79'], ['alignment' => Jc::CENTER, 'spaceAfter' => 120]);
 
         $refTable = $section->addTable('InfoTable');
-        $refTable->addRow();
+        $this->pageLayout->addWordSummaryRow($refTable);
         $refTable->addCell(4700)->addText('Ref: '.$snapshot['delivery_order']['reference'], ['bold' => true]);
         $refTable->addCell(4700)->addText('Dated: '.$snapshot['delivery_order']['dated'], ['bold' => true]);
 
@@ -112,16 +104,22 @@ class DeliveryOrderDocumentService
 
         $section->addTextBreak(1);
         $itemsTable = $section->addTable('ItemsTable');
-        $itemsTable->addRow();
-        foreach (['SL No', 'Item Description', 'Qty'] as $heading) {
-            $itemsTable->addCell($heading === 'Item Description' ? 6500 : 1350, ['bgColor' => 'D9D9D9', 'valign' => 'center'])
+        $this->pageLayout->addWordTableHeader($itemsTable);
+        foreach ([
+            'SL No' => 1000,
+            'Buyer Item Code' => 1500,
+            'Item Description' => 5400,
+            'Qty' => 1350,
+        ] as $heading => $width) {
+            $itemsTable->addCell($width, ['bgColor' => 'D9D9D9', 'valign' => 'center'])
                 ->addText($heading, ['bold' => true], ['alignment' => Jc::CENTER]);
         }
 
         foreach ($snapshot['items'] as $item) {
             $itemsTable->addRow();
             $itemsTable->addCell(1000)->addText((string) $item['line_number'], [], ['alignment' => Jc::CENTER]);
-            $descriptionCell = $itemsTable->addCell(6500);
+            $itemsTable->addCell(1500)->addText($item['buyer_item_code'] ?: '-', [], ['alignment' => Jc::CENTER]);
+            $descriptionCell = $itemsTable->addCell(5400);
             foreach (explode("\n", (string) $item['description']) as $line) {
                 if (trim($line) !== '') {
                     $descriptionCell->addText(trim($line));
@@ -132,31 +130,30 @@ class DeliveryOrderDocumentService
 
         $section->addTextBreak(2);
         $signature = $section->addTable('InfoTable');
-        $signature->addRow();
+        $this->pageLayout->addWordSummaryRow($signature);
         $signature->addCell(4700)->addText('Delivered By', ['bold' => true], ['alignment' => Jc::CENTER]);
         $signature->addCell(4700)->addText('Received By / Customer Signature', ['bold' => true], ['alignment' => Jc::CENTER]);
-        $signature->addRow(900);
+        $signature->addRow(900, ['cantSplit' => true]);
         $signature->addCell(4700)->addText('');
         $signature->addCell(4700)->addText('');
-
-        $this->addImageIfExists($section, 'quotation-assets/isc-footer.jpeg', 742, null);
 
         IOFactory::createWriter($phpWord, 'Word2007')->save(Storage::disk('local')->path($storagePath));
     }
 
     /**
-     * @param array<string, mixed> $snapshot
+     * @param  array<string, mixed>  $snapshot
      */
     public function writePdf(array $snapshot, string $storagePath): void
     {
         Storage::disk('local')->makeDirectory(dirname($storagePath));
+        $pdfSnapshot = $this->pageLayout->preparePdfSnapshot($snapshot);
 
         $dompdf = new Dompdf([
             'isRemoteEnabled' => false,
             'isHtml5ParserEnabled' => true,
         ]);
         $dompdf->loadHtml(view('delivery-orders.document', [
-            'snapshot' => $snapshot,
+            'snapshot' => $pdfSnapshot,
             'assets' => [
                 'header' => $this->assetDataUri('quotation-assets/isc-header.jpeg'),
                 'footer' => $this->assetDataUri('quotation-assets/isc-footer.jpeg'),
@@ -164,13 +161,18 @@ class DeliveryOrderDocumentService
         ])->render());
         $dompdf->setPaper('A4');
         $dompdf->render();
+        $this->pageLayout->addPdfPageChrome(
+            $dompdf,
+            (string) $snapshot['delivery_order']['reference'],
+            $snapshot['supplier']['vat_tin'] ?? $snapshot['buyer']['vat_tin'] ?? null,
+        );
 
         Storage::disk('local')->put($storagePath, $dompdf->output());
     }
 
     private function addInfoRow(mixed $table, string $leftTitle, array $leftLines, string $rightTitle, array $rightLines): void
     {
-        $table->addRow();
+        $table->addRow(null, ['cantSplit' => true]);
         $left = $table->addCell(4700);
         $right = $table->addCell(4700);
         $left->addText($leftTitle, ['bold' => true, 'color' => '1F4E79']);
@@ -193,6 +195,7 @@ class DeliveryOrderDocumentService
             'location' => $company?->location,
             'postal_code' => $company?->postal_code,
             'country' => $company?->country?->name,
+            'vat_tin' => $company?->vat_tin,
         ];
     }
 
@@ -252,7 +255,9 @@ class DeliveryOrderDocumentService
 
     private function addImageIfExists(mixed $section, string $storagePath, ?int $width = null, ?int $height = null): void
     {
-        if (! Storage::disk('local')->exists($storagePath)) {
+        $assetPath = DocumentBrandingAssets::path($storagePath);
+
+        if ($assetPath === null) {
             return;
         }
 
@@ -262,18 +267,11 @@ class DeliveryOrderDocumentService
             'alignment' => Jc::CENTER,
         ]);
 
-        $section->addImage(Storage::disk('local')->path($storagePath), $options);
+        $section->addImage($assetPath, $options);
     }
 
     private function assetDataUri(string $storagePath): ?string
     {
-        if (! Storage::disk('local')->exists($storagePath)) {
-            return null;
-        }
-
-        $path = Storage::disk('local')->path($storagePath);
-        $mime = mime_content_type($path) ?: 'image/jpeg';
-
-        return 'data:'.$mime.';base64,'.base64_encode((string) file_get_contents($path));
+        return DocumentBrandingAssets::dataUri($storagePath);
     }
 }

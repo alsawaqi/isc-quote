@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SupplierPo extends Model
@@ -13,9 +14,11 @@ class SupplierPo extends Model
 
     protected $fillable = [
         'po_reference',
+        'revision_number',
         'supplier_id',
         'supplier_company_id',
         'supplier_contact_id',
+        'company_location_id',
         'buyer_company_id',
         'buyer_contact_id',
         'incoterm_id',
@@ -40,6 +43,8 @@ class SupplierPo extends Model
     protected function casts(): array
     {
         return [
+            'company_location_id' => 'integer',
+            'revision_number' => 'integer',
             'payment_term_days' => 'integer',
             'delivery_period_min' => 'integer',
             'delivery_period_max' => 'integer',
@@ -63,6 +68,11 @@ class SupplierPo extends Model
     public function supplierContact(): BelongsTo
     {
         return $this->belongsTo(Contact::class, 'supplier_contact_id');
+    }
+
+    public function companyLocation(): BelongsTo
+    {
+        return $this->belongsTo(CompanyLocation::class);
     }
 
     public function buyerCompany(): BelongsTo
@@ -95,8 +105,23 @@ class SupplierPo extends Model
         return $this->hasMany(SupplierPoTerm::class)->orderBy('line_number');
     }
 
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(SupplierPoRevision::class)->orderByDesc('revision_number');
+    }
+
+    public function latestRevision(): HasOne
+    {
+        return $this->hasOne(SupplierPoRevision::class)->latestOfMany('revision_number');
+    }
+
     public function followUpItems(): HasMany
     {
         return $this->hasMany(FollowUpItem::class);
+    }
+
+    public function itemFulfilments(): HasMany
+    {
+        return $this->hasMany(ItemFulfilment::class);
     }
 }

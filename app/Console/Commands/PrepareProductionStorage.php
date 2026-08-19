@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\DocumentBrandingAssets;
 use Illuminate\Console\Command;
 
 class PrepareProductionStorage extends Command
@@ -13,7 +14,7 @@ class PrepareProductionStorage extends Command
     public function handle(): int
     {
         $directories = [
-            storage_path('app/private'),
+            (string) config('filesystems.disks.local.root'),
             storage_path('app/public'),
             storage_path('framework/cache/data'),
             storage_path('framework/sessions'),
@@ -33,7 +34,19 @@ class PrepareProductionStorage extends Command
             $this->line("Ready: {$directory}");
         }
 
-        $this->info('Storage directories are ready. The public storage symlink was not created because this app serves uploaded/generated documents through authenticated download routes.');
+        foreach (DocumentBrandingAssets::REQUIRED as $name => $assetPath) {
+            $bundledPath = DocumentBrandingAssets::bundledPath($assetPath);
+
+            if (! is_file($bundledPath) || ! is_readable($bundledPath)) {
+                $this->error("Missing bundled quotation branding asset [{$name}]: {$bundledPath}");
+
+                return self::FAILURE;
+            }
+
+            $this->line("Bundled branding asset ready: {$bundledPath}");
+        }
+
+        $this->info('Storage directories and bundled quotation branding assets are ready. The public storage symlink was not created because this app serves uploaded/generated documents through authenticated download routes.');
 
         return self::SUCCESS;
     }

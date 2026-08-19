@@ -112,36 +112,38 @@ class AdminMasterDataApiTest extends TestCase
 
         $uomId = $this->withToken($token)
             ->postJson('/api/admin/uoms', [
-                'code' => 'BOX',
-                'name' => 'Box',
+                'code' => 'BAG',
+                'name' => 'Bag',
                 'status' => 'active',
             ])
             ->assertCreated()
             ->assertJsonPath('message', 'UOM created successfully.')
-            ->assertJsonPath('data.code', 'BOX')
-            ->assertJsonPath('data.name', 'Box')
+            ->assertJsonPath('data.code', 'BAG')
+            ->assertJsonPath('data.name', 'Bag')
             ->json('data.id');
 
         $this->withToken($token)
             ->putJson("/api/admin/uoms/{$uomId}", [
-                'code' => 'BOX',
-                'name' => 'Box / Carton',
+                'code' => 'BAG',
+                'name' => 'Bag / Sack',
                 'status' => 'inactive',
             ])
             ->assertOk()
-            ->assertJsonPath('data.name', 'Box / Carton')
+            ->assertJsonPath('data.name', 'Bag / Sack')
             ->assertJsonPath('data.status', 'inactive');
 
         $currencyId = $this->withToken($token)
             ->postJson('/api/admin/currencies', [
                 'code' => 'AED',
                 'name' => 'UAE Dirham',
+                'symbol' => 'د.إ',
                 'exchange_rate' => '9.550000',
                 'status' => 'active',
             ])
             ->assertCreated()
             ->assertJsonPath('message', 'Currency created successfully.')
             ->assertJsonPath('data.code', 'AED')
+            ->assertJsonPath('data.symbol', 'د.إ')
             ->assertJsonPath('data.exchange_rate', '9.550000')
             ->json('data.id');
 
@@ -149,17 +151,19 @@ class AdminMasterDataApiTest extends TestCase
             ->putJson("/api/admin/currencies/{$currencyId}", [
                 'code' => 'AED',
                 'name' => 'UAE Dirham',
+                'symbol' => 'AED',
                 'exchange_rate' => '9.600000',
                 'status' => 'active',
             ])
             ->assertOk()
+            ->assertJsonPath('data.symbol', 'AED')
             ->assertJsonPath('data.exchange_rate', '9.600000');
 
         $this->withToken($token)
             ->getJson('/api/admin/master-data/options')
             ->assertOk()
-            ->assertJsonFragment(['code' => 'BOX', 'name' => 'Box / Carton'])
-            ->assertJsonFragment(['code' => 'AED', 'name' => 'UAE Dirham', 'exchange_rate' => '9.600000']);
+            ->assertJsonFragment(['code' => 'BAG', 'name' => 'Bag / Sack'])
+            ->assertJsonFragment(['code' => 'AED', 'name' => 'UAE Dirham', 'symbol' => 'AED', 'exchange_rate' => '9.600000']);
     }
 
     public function test_admin_can_manage_manufacturers_as_country_named_records(): void
@@ -198,7 +202,7 @@ class AdminMasterDataApiTest extends TestCase
         ], array_keys($response->json('data')));
     }
 
-    public function test_admin_can_optionally_link_supplier_to_manufacturer(): void
+    public function test_legacy_supplier_writes_are_redirected_to_company_profiles(): void
     {
         $token = $this->adminToken();
         $country = Country::create([
@@ -233,23 +237,15 @@ class AdminMasterDataApiTest extends TestCase
             'status' => 'active',
         ]);
 
-        $response = $this->withToken($token)
+        $this->withToken($token)
             ->postJson('/api/admin/suppliers', [
                 'company_id' => $company->id,
                 'primary_contact_id' => $contact->id,
                 'manufacturer_id' => $manufacturer->id,
                 'status' => 'active',
             ])
-            ->assertCreated()
-            ->assertJsonPath('message', 'Supplier created successfully.')
-            ->assertJsonPath('data.company_name', 'ABB LLC')
-            ->assertJsonPath('data.manufacturer_id', $manufacturer->id)
-            ->assertJsonPath('data.manufacturer_name', 'ABB Manufacturing');
-
-        $this->assertDatabaseHas('suppliers', [
-            'id' => $response->json('data.id'),
-            'manufacturer_id' => $manufacturer->id,
-        ]);
+            ->assertConflict()
+            ->assertJsonPath('message', 'Manage companies, contacts, and supplier details through the company profile.');
 
         $this->withToken($token)
             ->getJson('/api/admin/suppliers')

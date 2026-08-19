@@ -13,6 +13,7 @@ class LogisticsCase extends Model
 
     protected $fillable = [
         'follow_up_item_id',
+        'item_fulfilment_id',
         'delivery_responsibility',
         'status',
         'eta_at',
@@ -44,6 +45,11 @@ class LogisticsCase extends Model
     public function followUpItem(): BelongsTo
     {
         return $this->belongsTo(FollowUpItem::class);
+    }
+
+    public function itemFulfilment(): BelongsTo
+    {
+        return $this->belongsTo(ItemFulfilment::class);
     }
 
     public function creator(): BelongsTo

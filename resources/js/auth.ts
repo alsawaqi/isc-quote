@@ -156,7 +156,7 @@ export async function downloadProtectedFile(url: string, fallbackFilename: strin
     const blob = await response.blob();
     const contentDisposition = response.headers.get('content-disposition') ?? '';
     const match = contentDisposition.match(/filename="?([^"]+)"?/i);
-    const filename = match?.[1] ?? fallbackFilename;
+    const filename = (match?.[1] ?? fallbackFilename).toUpperCase();
     const objectUrl = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = objectUrl;

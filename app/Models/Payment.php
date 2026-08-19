@@ -13,6 +13,8 @@ class Payment extends Model
     protected $fillable = [
         'invoice_id',
         'follow_up_item_id',
+        'item_fulfilment_id',
+        'payment_plan_follow_up_id',
         'amount',
         'currency',
         'payment_date',
@@ -37,6 +39,16 @@ class Payment extends Model
     public function followUpItem(): BelongsTo
     {
         return $this->belongsTo(FollowUpItem::class);
+    }
+
+    public function itemFulfilment(): BelongsTo
+    {
+        return $this->belongsTo(ItemFulfilment::class);
+    }
+
+    public function paymentPlanFollowUp(): BelongsTo
+    {
+        return $this->belongsTo(PaymentPlanFollowUp::class);
     }
 
     public function recorder(): BelongsTo

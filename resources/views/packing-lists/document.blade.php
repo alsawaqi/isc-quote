@@ -3,11 +3,13 @@
 <head>
     <meta charset="utf-8">
     <style>
+        @include('documents.partials.page-chrome-css')
+
         body {
             color: #111c25;
             font-family: Arial, sans-serif;
             font-size: 11px;
-            margin: 22px;
+            margin: 0;
         }
 
         h1 {
@@ -44,6 +46,7 @@
         .center {
             text-align: center;
         }
+
     </style>
 </head>
 <body>
@@ -91,7 +94,7 @@
         </tr>
     </table>
 
-    <table>
+    <table class="items-table">
         <thead>
             <tr>
                 <th style="width: 8%;">SL No</th>
@@ -103,13 +106,15 @@
         </thead>
         <tbody>
             @foreach ($snapshot['items'] as $item)
-                <tr>
-                    <td class="center">{{ $item['line_number'] }}</td>
-                    <td>{!! nl2br(e($item['description'])) !!}</td>
-                    <td class="center">{{ $item['quantity'] }}{{ $item['uom'] }}</td>
-                    <td class="center">{{ $item['package_size'] }}</td>
-                    <td class="center">{{ $item['gross_weight'] }} / {{ $item['net_weight'] }}</td>
-                </tr>
+                @foreach ($item['pdf_description_chunks'] ?? [(string) $item['description']] as $chunkIndex => $descriptionChunk)
+                    <tr @class(['item-continuation' => $chunkIndex > 0])>
+                        <td class="center">{{ $chunkIndex === 0 ? $item['line_number'] : '' }}</td>
+                        <td>{!! nl2br(e($descriptionChunk)) !!}</td>
+                        <td class="center">{{ $chunkIndex === 0 ? $item['quantity'].$item['uom'] : '' }}</td>
+                        <td class="center">{{ $chunkIndex === 0 ? $item['package_size'] : '' }}</td>
+                        <td class="center">{{ $chunkIndex === 0 ? $item['gross_weight'].' / '.$item['net_weight'] : '' }}</td>
+                    </tr>
+                @endforeach
             @endforeach
         </tbody>
     </table>

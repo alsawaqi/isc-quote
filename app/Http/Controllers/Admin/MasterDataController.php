@@ -73,6 +73,10 @@ class MasterDataController extends Controller
         $config = $this->config($resource);
         $this->authorizeResource($request, $resource, 'create');
 
+        if ($this->isCompanyAggregateResource($resource)) {
+            return $this->companyAggregateWriteResponse();
+        }
+
         if ($resource === 'roles') {
             return response()->json([
                 'message' => 'Roles are fixed. Assign permissions to users instead.',
@@ -93,6 +97,10 @@ class MasterDataController extends Controller
         $config = $this->config($resource);
         $this->authorizeResource($request, $resource, 'update');
 
+        if ($this->isCompanyAggregateResource($resource)) {
+            return $this->companyAggregateWriteResponse();
+        }
+
         /** @var class-string<Model> $model */
         $model = $config['model'];
         $record = $model::query()->findOrFail($id);
@@ -109,6 +117,10 @@ class MasterDataController extends Controller
     {
         $config = $this->config($resource);
         $this->authorizeResource($request, $resource, 'delete');
+
+        if ($this->isCompanyAggregateResource($resource)) {
+            return $this->companyAggregateWriteResponse();
+        }
 
         /** @var class-string<Model> $model */
         $model = $config['model'];
@@ -183,6 +195,18 @@ class MasterDataController extends Controller
         }
     }
 
+    private function isCompanyAggregateResource(string $resource): bool
+    {
+        return in_array($resource, ['companies', 'contacts', 'suppliers'], true);
+    }
+
+    private function companyAggregateWriteResponse(): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Manage companies, contacts, and supplier details through the company profile.',
+        ], 409);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -235,7 +259,7 @@ class MasterDataController extends Controller
                 'model' => Currency::class,
                 'label' => 'Currency',
                 'order_by' => 'code',
-                'search' => ['code', 'name', 'status'],
+                'search' => ['code', 'name', 'symbol', 'status'],
                 'with' => [],
             ],
             'manufacturers' => [
@@ -333,6 +357,7 @@ class MasterDataController extends Controller
             'currencies' => [
                 'code' => ['required', 'string', 'max:8', Rule::unique('currencies', 'code')->ignore($id)],
                 'name' => ['required', 'string', 'max:255'],
+                'symbol' => ['nullable', 'string', 'max:16'],
                 'exchange_rate' => ['required', 'numeric', 'min:0', 'max:999999999'],
                 'status' => $statusRule,
             ],
@@ -552,16 +577,19 @@ class MasterDataController extends Controller
             'email' => $salespersonContact['email'] ?: $fallbackEmail,
             'fax' => $salespersonContact['fax'] ?: null,
             'is_primary' => false,
+            'serves_buyer' => false,
+            'serves_supplier' => true,
+            'all_locations' => true,
+            'is_primary_buyer' => false,
+            'is_primary_supplier' => false,
             'status' => 'active',
         ])->save();
 
-        Supplier::query()->updateOrCreate(
-            [
-                'company_id' => $company->id,
-                'primary_contact_id' => $contact->id,
-            ],
-            ['status' => 'active']
-        );
+        $supplier = Supplier::query()->where('company_id', $company->id)->orderBy('id')->first()
+            ?? new Supplier(['company_id' => $company->id]);
+        $supplier->status = 'active';
+        $supplier->primary_contact_id ??= $contact->id;
+        $supplier->save();
 
         return $contact;
     }
@@ -666,6 +694,7 @@ class MasterDataController extends Controller
                 'id' => $record->id,
                 'code' => $record->code,
                 'name' => $record->name,
+                'symbol' => $record->symbol,
                 'exchange_rate' => $record->exchange_rate,
                 'status' => $record->status,
                 'created_at' => $this->date($record),
@@ -753,7 +782,7 @@ class MasterDataController extends Controller
             'contacts' => Contact::query()->orderBy('name')->get(['id', 'name', 'company_id']),
             'manufacturers' => Manufacturer::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'country_id']),
             'uoms' => Uom::query()->orderBy('code')->get(['id', 'code', 'name', 'status']),
-            'currencies' => Currency::query()->orderBy('code')->get(['id', 'code', 'name', 'exchange_rate', 'status']),
+            'currencies' => Currency::query()->orderBy('code')->get(['id', 'code', 'name', 'symbol', 'exchange_rate', 'status']),
             'roles' => Role::query()->orderBy('name')->get(['id', 'name', 'slug']),
             'permissions' => Permission::query()->orderBy('group')->orderBy('name')->get(['id', 'name', 'group']),
         ];

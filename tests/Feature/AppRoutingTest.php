@@ -11,7 +11,7 @@ class AppRoutingTest extends TestCase
 
     public function test_web_routes_serve_the_vue_single_page_app(): void
     {
-        foreach (['/', '/login', '/dashboard', '/countries', '/quotations', '/supplier-po', '/supplier-pos', '/supplier-pos/create', '/supplier-pos/1/edit', '/follow-up', '/follow-up/groups', '/follow-up/visualization', '/follow-up/1'] as $path) {
+        foreach (['/', '/login', '/dashboard', '/countries', '/companies', '/companies/create', '/companies/1', '/companies/1/edit', '/quotations', '/supplier-po', '/supplier-pos', '/supplier-pos/create', '/supplier-pos/1/edit', '/follow-up', '/follow-up/groups', '/follow-up/visualization', '/follow-up/1'] as $path) {
             $this->get($path)
                 ->assertOk()
                 ->assertViewIs('app');
@@ -47,6 +47,23 @@ class AppRoutingTest extends TestCase
         $supplierPoList = file_get_contents(resource_path('js/components/SupplierPoListView.vue'));
         $this->assertStringContainsString('Edit', $supplierPoList);
         $this->assertStringContainsString('router.push(`/supplier-pos/${supplierPo.id}/edit`)', $supplierPoList);
+    }
+
+    public function test_company_workspace_replaces_standalone_contact_and_supplier_pages(): void
+    {
+        $router = file_get_contents(resource_path('js/router.ts'));
+        $navigation = file_get_contents(resource_path('js/data/dashboard.ts'));
+
+        $this->assertStringContainsString("const CompanyDirectoryView = () => import('./components/CompanyDirectoryView.vue');", $router);
+        $this->assertStringContainsString("const CompanyWizardView = () => import('./components/CompanyWizardView.vue');", $router);
+        $this->assertStringContainsString("const CompanyProfileView = () => import('./components/CompanyProfileView.vue');", $router);
+        $this->assertStringContainsString("path: '/companies/create'", $router);
+        $this->assertStringContainsString("path: '/companies/:id'", $router);
+        $this->assertStringContainsString("path: '/companies/:id/edit'", $router);
+        $this->assertStringNotContainsString("moduleRoute('/contacts'", $router);
+        $this->assertStringNotContainsString("moduleRoute('/suppliers'", $router);
+        $this->assertStringNotContainsString("label: 'Contacts'", $navigation);
+        $this->assertStringNotContainsString("label: 'Suppliers'", $navigation);
     }
 
     public function test_follow_up_workspace_has_dashboard_and_item_detail_routes(): void
@@ -128,6 +145,8 @@ class AppRoutingTest extends TestCase
         $this->assertStringContainsString('Quotation Number', $supplierPoCreate);
         $this->assertStringContainsString('Customer', $supplierPoCreate);
         $this->assertStringContainsString('Manufacturer', $supplierPoCreate);
+        $this->assertStringContainsString('company_location_id', $supplierPoCreate);
+        $this->assertStringContainsString('Supplier Factory', $supplierPoCreate);
     }
 
     public function test_follow_up_dashboard_highlights_due_reminders_before_the_general_list(): void

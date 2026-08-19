@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
     AlertTriangle,
@@ -55,17 +55,31 @@ interface FollowUpItem {
     supplier_po_reference: string | null;
     quotation_reference: string | null;
     quotation_delivery_responsibility: 'isc' | 'buyer' | 'supplier' | null;
+    quotation_payment_term_days: number | null;
+    quotation_payment_customer_type: string;
+    quotation_payment_customer_type_label: string;
+    quotation_payment_schedule_summary: string | null;
+    quotation_payment_schedules: PaymentScheduleRecord[];
+    payment_plan_follow_ups: PaymentPlanFollowUpRecord[];
     buyer_po_number: string | null;
     buyer_po_date: string | null;
+    buyer_po_original_file_name: string | null;
+    buyer_po_download_url: string | null;
     buyer_company_name: string | null;
     buyer_contact_name: string | null;
     supplier_company_name: string | null;
     supplier_contact_name: string | null;
+    company_location_id: number | null;
+    factory_name: string | null;
+    factory_location: string | null;
+    factory_country_name: string | null;
+    factory_manufacturer_name: string | null;
     salesperson_name: string | null;
     assigned_to_name: string | null;
     status: string;
     current_stage: FollowUpStepKey;
     current_stage_label: string;
+    product_code: string | null;
     product_name: string | null;
     title: string | null;
     description: string | null;
@@ -78,6 +92,7 @@ interface FollowUpItem {
     next_follow_up_at: string | null;
     acknowledgement_received_at: string | null;
     acknowledgement_original_file_name: string | null;
+    acknowledgement_download_url: string | null;
     acknowledgement_notes: string | null;
     acknowledged_by_name: string | null;
     closed_at: string | null;
@@ -89,9 +104,79 @@ interface FollowUpItem {
     shipping_documents_complete: boolean;
     packing_list: PackingList | null;
     logistics_case: LogisticsCase | null;
+    fulfilment: FulfilmentSummary;
     delivery_order: DeliveryOrder | null;
+    delivery_orders: DeliveryOrder[];
     invoice: InvoiceRecord | null;
+    invoices: InvoiceRecord[];
     timeline_events?: FollowUpTimelineEvent[];
+}
+
+interface FulfilmentSummary {
+    ordered_quantity: string;
+    supplier_quantity: string;
+    received_quantity: string;
+    remaining_receive_quantity: string;
+    delivered_quantity: string;
+    remaining_delivery_quantity: string;
+    invoiced_quantity: string;
+    remaining_invoice_quantity: string;
+    quotation_total_amount: string;
+    invoiced_amount: string;
+    paid_amount: string;
+    balance_amount: string;
+    remaining_quotation_amount: string;
+    uom: string | null;
+    currency: string | null;
+}
+
+interface PaymentScheduleRecord {
+    id: number;
+    line_number: number;
+    label: string;
+    payment_method: string;
+    payment_method_label: string;
+    payment_percentage: string;
+    due_timing: string;
+    due_event: string | null;
+    due_event_label: string;
+    due_offset_days: number | null;
+    due_date: string | null;
+    due_text: string;
+    notes: string | null;
+    summary: string;
+}
+
+interface PaymentPlanAttachment {
+    id: number;
+    original_file_name: string | null;
+    download_url: string | null;
+    mime_type: string | null;
+    file_size: number | null;
+    remarks: string | null;
+    uploaded_by_name: string | null;
+    created_at: string | null;
+}
+
+interface PaymentPlanFollowUpRecord {
+    id: number;
+    quotation_payment_schedule_id: number;
+    schedule: PaymentScheduleRecord | null;
+    label: string;
+    payment_method_label: string;
+    payment_percentage: string;
+    expected_amount: string | null;
+    currency: string | null;
+    due_text: string;
+    due_date: string | null;
+    due_state: 'paid' | 'overdue' | 'due_today' | 'upcoming' | 'unscheduled';
+    status: 'pending' | 'paid' | string;
+    paid_at: string | null;
+    paid_amount: string | null;
+    payment_reference: string | null;
+    remarks: string | null;
+    recorded_by_name: string | null;
+    attachments: PaymentPlanAttachment[];
 }
 
 interface ShippingDocument {
@@ -103,6 +188,7 @@ interface ShippingDocument {
     document_number: string | null;
     document_date: string | null;
     original_file_name: string | null;
+    download_url: string | null;
     uploaded_by_name: string | null;
     uploaded_at: string | null;
 }
@@ -157,7 +243,9 @@ interface DeliveryOrder {
     terms: string | null;
     status: string;
     signed_original_file_name: string | null;
+    signed_download_url: string | null;
     signed_at: string | null;
+    total_quantity: string;
     items: Array<{
         id: number;
         line_number: number;
@@ -165,6 +253,7 @@ interface DeliveryOrder {
         quantity: string;
         uom: string;
         buyer_po_number: string | null;
+        buyer_item_code: string | null;
     }>;
     downloads: {
         docx: string;
@@ -194,6 +283,18 @@ interface InvoiceRecord {
     closed_at: string | null;
     buyer_po_number: string | null;
     delivery_order_reference: string | null;
+    total_quantity: string;
+    items: Array<{
+        id: number;
+        line_number: number;
+        item_description: string;
+        quantity: string;
+        uom: string;
+        unit_price: string;
+        total_price: string;
+        buyer_po_number: string | null;
+        buyer_item_code: string | null;
+    }>;
     payments: PaymentRecord[];
     downloads: {
         docx: string;
@@ -239,12 +340,16 @@ const isUploadingSignedDeliveryOrder = ref(false);
 const isSavingInvoice = ref(false);
 const isMarkingInvoiceSent = ref(false);
 const isSavingPayment = ref(false);
+const isSavingPaymentPlanId = ref<number | null>(null);
+const isUploadingPaymentPlanAttachmentId = ref<number | null>(null);
 const isClosingJob = ref(false);
 const toast = ref<Toast | null>(null);
 const acknowledgementFile = ref<File | null>(null);
 const signedDeliveryOrderFile = ref<File | null>(null);
 const shippingDocumentFiles = reactive<Record<string, File | null>>({});
 const shippingDocumentForms = reactive<Record<string, { document_number: string; document_date: string; remarks: string }>>({});
+const paymentPlanFiles = reactive<Record<number, File | null>>({});
+const paymentPlanForms = reactive<Record<number, { paid_amount: string; paid_at: string; payment_reference: string; remarks: string; attachment_remarks: string }>>({});
 
 const reminderForm = reactive({
     reminder_interval_value: 2,
@@ -280,10 +385,12 @@ const logisticsEventForm = reactive({
 });
 const deliveryOrderForm = reactive({
     delivery_place: '',
+    quantity: '',
     terms: '',
     signed_at: '',
 });
 const invoiceForm = reactive({
+    quantity: '',
     payment_term_days: 45,
     vat_rate: '0',
     vat_exception_reason: '',
@@ -291,6 +398,7 @@ const invoiceForm = reactive({
     remarks: '',
 });
 const paymentForm = reactive({
+    invoice_id: null as number | null,
     amount: '',
     payment_date: '',
     payment_reference: '',
@@ -318,7 +426,7 @@ const requiredShippingDocuments = computed(() => item.value?.shipping_documents.
 const optionalTransportDocuments = computed(() => item.value?.shipping_documents.filter((document) => !document.is_required) ?? []);
 const logisticsCase = computed(() => item.value?.logistics_case ?? null);
 const canSaveEta = computed(
-    () => Boolean(item.value?.shipping_documents_complete && logisticsForm.eta_at.length > 0) && isSavingLogistics.value === null,
+    () => Boolean(logisticsForm.eta_at.length > 0) && isSavingLogistics.value === null,
 );
 const canMarkDocumentsSent = computed(
     () => Boolean(logisticsCase.value && logisticsEventForm.documents_sent_at.length > 0) && isSavingLogistics.value === null,
@@ -331,6 +439,8 @@ const canMarkWarehouseReceived = computed(
                 logisticsEventForm.warehouse_received_at.length > 0 &&
                 logisticsEventForm.received_location.trim().length > 0 &&
                 logisticsEventForm.received_quantity.trim().length > 0 &&
+                Number(logisticsEventForm.received_quantity) > 0 &&
+                Number(logisticsEventForm.received_quantity) <= remainingReceiveQuantity.value + 0.0005 &&
                 logisticsEventForm.goods_condition.trim().length > 0,
         ) && isSavingLogistics.value === null,
 );
@@ -340,6 +450,8 @@ const canMarkBuyerReceived = computed(
             logisticsCase.value &&
                 logisticsEventForm.buyer_received_at.length > 0 &&
                 logisticsEventForm.received_quantity.trim().length > 0 &&
+                Number(logisticsEventForm.received_quantity) > 0 &&
+                Number(logisticsEventForm.received_quantity) <= remainingReceiveQuantity.value + 0.0005 &&
                 logisticsEventForm.goods_condition.trim().length > 0,
         ) && isSavingLogistics.value === null,
 );
@@ -347,32 +459,70 @@ const shouldShowDocumentsSent = computed(() => logisticsCase.value?.delivery_res
 const shouldShowArrival = computed(() => logisticsCase.value?.delivery_responsibility === 'isc' || logisticsCase.value?.delivery_responsibility === 'supplier');
 const shouldShowWarehouseReceipt = computed(() => logisticsCase.value?.delivery_responsibility === 'isc');
 const shouldShowBuyerReceipt = computed(() => logisticsCase.value?.delivery_responsibility === 'buyer_agent');
+const remainingReceiveQuantity = computed(() => Number(item.value?.fulfilment.remaining_receive_quantity ?? 0));
+const remainingDeliveryQuantity = computed(() => Number(item.value?.fulfilment.remaining_delivery_quantity ?? 0));
+const remainingInvoiceQuantity = computed(() => Number(item.value?.fulfilment.remaining_invoice_quantity ?? 0));
+const itemInvoiceBalance = computed(() => Number(item.value?.fulfilment.balance_amount ?? 0));
+const openPaymentInvoices = computed(() => item.value?.invoices.filter((invoice) => Number(invoice.balance_amount) > 0 && !['paid', 'closed'].includes(invoice.payment_status)) ?? []);
+const selectedPaymentInvoice = computed(() => {
+    const invoices = item.value?.invoices ?? [];
+
+    return invoices.find((invoice) => invoice.id === paymentForm.invoice_id) ?? openPaymentInvoices.value[0] ?? item.value?.invoice ?? null;
+});
 const canSaveDeliveryOrder = computed(
     () =>
-        Boolean(item.value && (item.value.status === 'ready_for_delivery_order' || item.value.delivery_order) && deliveryOrderForm.delivery_place.trim().length > 0) &&
+        Boolean(
+            item.value &&
+                remainingDeliveryQuantity.value > 0 &&
+                deliveryOrderForm.delivery_place.trim().length > 0 &&
+                (deliveryOrderForm.quantity.trim().length === 0 || (Number(deliveryOrderForm.quantity) > 0 && Number(deliveryOrderForm.quantity) <= remainingDeliveryQuantity.value + 0.0005)),
+        ) &&
         !isSavingDeliveryOrder.value,
 );
 const canUploadSignedDeliveryOrder = computed(
     () => Boolean(item.value?.delivery_order && deliveryOrderForm.signed_at.length > 0 && signedDeliveryOrderFile.value) && !isUploadingSignedDeliveryOrder.value,
 );
 const canSaveInvoice = computed(
-    () => Boolean(item.value && (item.value.status === 'ready_for_invoice' || item.value.invoice) && invoiceForm.payment_term_days >= 0) && !isSavingInvoice.value,
+    () =>
+        Boolean(
+            item.value &&
+                remainingInvoiceQuantity.value > 0 &&
+                invoiceForm.payment_term_days >= 0 &&
+                (invoiceForm.quantity.trim().length === 0 || (Number(invoiceForm.quantity) > 0 && Number(invoiceForm.quantity) <= remainingInvoiceQuantity.value + 0.0005)),
+        ) && !isSavingInvoice.value,
 );
-const canMarkInvoiceSent = computed(() => Boolean(item.value?.invoice && item.value.invoice.status === 'issued') && !isMarkingInvoiceSent.value);
-const canSavePayment = computed(
-    () => Boolean(item.value?.invoice && Number(paymentForm.amount) > 0 && paymentForm.payment_date.length > 0 && item.value.invoice.payment_status !== 'paid' && item.value.invoice.payment_status !== 'closed') && !isSavingPayment.value,
+const canMarkInvoiceSent = computed(() => {
+    const invoice = selectedPaymentInvoice.value;
+
+    return Boolean(invoice && invoice.status === 'issued') && !isMarkingInvoiceSent.value;
+});
+const canSavePayment = computed(() => {
+    const invoice = selectedPaymentInvoice.value;
+
+    return Boolean(invoice && Number(paymentForm.amount) > 0 && paymentForm.payment_date.length > 0 && !['paid', 'closed'].includes(invoice.payment_status)) && !isSavingPayment.value;
+});
+const canCloseJob = computed(
+    () =>
+        Boolean(
+                item.value &&
+                item.value.invoices.length > 0 &&
+                item.value.status !== 'closed' &&
+                remainingReceiveQuantity.value <= 0.0005 &&
+                remainingDeliveryQuantity.value <= 0.0005 &&
+                remainingInvoiceQuantity.value <= 0.0005 &&
+                itemInvoiceBalance.value <= 0.0005,
+        ) && !isClosingJob.value,
 );
-const canCloseJob = computed(() => Boolean(item.value?.invoice?.payment_status === 'paid' && item.value.status !== 'closed') && !isClosingJob.value);
 const deliveryResponsibility = computed(() => logisticsCase.value?.delivery_responsibility ?? logisticsForm.delivery_responsibility);
 const isIscHandledDelivery = computed(() => deliveryResponsibility.value === 'isc');
 const isBuyerHandledDelivery = computed(() => deliveryResponsibility.value === 'buyer_agent');
 const isSupplierHandledDelivery = computed(() => deliveryResponsibility.value === 'supplier');
 const isExternalHandledDelivery = computed(() => deliveryResponsibility.value !== 'isc');
-const invoiceReadyStatuses = ['ready_for_invoice', 'invoice_created', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'];
+const invoiceReadyStatuses = ['ready_for_invoice', 'invoice_created', 'partially_invoiced', 'invoice_sent', 'payment_pending', 'partially_paid', 'paid', 'closed'];
 const acknowledgementComplete = computed(() => Boolean(item.value?.acknowledgement_received_at));
 const shippingAvailable = computed(() => acknowledgementComplete.value || Boolean(item.value && item.value.status !== 'awaiting_acknowledgement'));
 const shippingComplete = computed(() => Boolean(item.value?.shipping_documents_complete));
-const logisticsAvailable = computed(() => shippingComplete.value || Boolean(logisticsCase.value));
+const logisticsAvailable = computed(() => true);
 const logisticsComplete = computed(() => Boolean(logisticsCase.value));
 const deliveryAvailable = computed(() => logisticsComplete.value);
 const deliveryComplete = computed(() => {
@@ -381,11 +531,11 @@ const deliveryComplete = computed(() => {
     }
 
     if (isSupplierHandledDelivery.value) {
-        return Boolean(logisticsCase.value?.arrived_at || logisticsCase.value?.status === 'supplier_received' || item.value.invoice || invoiceReadyStatuses.includes(item.value.status));
+        return Boolean(logisticsCase.value?.arrived_at || logisticsCase.value?.status === 'supplier_received' || item.value.invoices.length > 0 || invoiceReadyStatuses.includes(item.value.status));
     }
 
     if (isBuyerHandledDelivery.value) {
-        return Boolean(logisticsCase.value?.buyer_received_at || logisticsCase.value?.status === 'buyer_received' || item.value.invoice || invoiceReadyStatuses.includes(item.value.status));
+        return Boolean(logisticsCase.value?.buyer_received_at || logisticsCase.value?.status === 'buyer_received' || item.value.invoices.length > 0 || invoiceReadyStatuses.includes(item.value.status));
     }
 
     return Boolean(
@@ -393,10 +543,10 @@ const deliveryComplete = computed(() => {
             invoiceReadyStatuses.includes(item.value.status),
     );
 });
-const invoiceAvailable = computed(() => deliveryComplete.value || Boolean(item.value?.invoice) || item.value?.status === 'ready_for_invoice');
-const invoiceComplete = computed(() => Boolean(item.value?.invoice));
+const invoiceAvailable = computed(() => deliveryComplete.value || Boolean(item.value?.invoices.length) || item.value?.status === 'ready_for_invoice' || item.value?.status === 'partially_invoiced');
+const invoiceComplete = computed(() => Boolean(item.value?.invoices.length));
 const paymentAvailable = computed(() => invoiceComplete.value);
-const paymentComplete = computed(() => Boolean(item.value?.invoice && ['paid', 'closed'].includes(item.value.invoice.payment_status)) || item.value?.status === 'closed');
+const paymentComplete = computed(() => Boolean(item.value && item.value.invoices.length > 0 && itemInvoiceBalance.value <= 0.0005 && remainingInvoiceQuantity.value <= 0.0005) || item.value?.status === 'closed');
 const followUpSteps = computed<FollowUpWorkflowStep[]>(() => [
     {
         key: 'acknowledgement',
@@ -469,6 +619,10 @@ const activeStageComments = computed(() => item.value?.comments_by_stage[activeF
 const isAdminUser = computed(() => currentUser.value?.roles.some((role) => role.slug === 'admin') ?? false);
 const timelineEvents = computed(() => item.value?.timeline_events ?? []);
 
+function decimalValue(value: string | null | undefined): number {
+    return Number(value ?? 0);
+}
+
 function preferredFollowUpStepKey(payload: FollowUpItem): FollowUpStepKey {
     if (!payload.acknowledgement_received_at) {
         return 'acknowledgement';
@@ -485,7 +639,7 @@ function preferredFollowUpStepKey(payload: FollowUpItem): FollowUpStepKey {
     if (
         payload.logistics_case.delivery_responsibility === 'supplier' &&
         !payload.logistics_case.arrived_at &&
-        !payload.invoice &&
+        payload.invoices.length === 0 &&
         !invoiceReadyStatuses.includes(payload.status)
     ) {
         return 'delivery';
@@ -494,7 +648,7 @@ function preferredFollowUpStepKey(payload: FollowUpItem): FollowUpStepKey {
     if (
         payload.logistics_case.delivery_responsibility === 'buyer_agent' &&
         !payload.logistics_case.buyer_received_at &&
-        !payload.invoice &&
+        payload.invoices.length === 0 &&
         !invoiceReadyStatuses.includes(payload.status)
     ) {
         return 'delivery';
@@ -508,7 +662,11 @@ function preferredFollowUpStepKey(payload: FollowUpItem): FollowUpStepKey {
         return 'delivery';
     }
 
-    if (!payload.invoice) {
+    if (decimalValue(payload.fulfilment.remaining_delivery_quantity) > 0 && payload.logistics_case.delivery_responsibility === 'isc') {
+        return 'delivery';
+    }
+
+    if (decimalValue(payload.fulfilment.remaining_invoice_quantity) > 0 || payload.invoices.length === 0) {
         return 'invoice';
     }
 
@@ -563,6 +721,10 @@ function statusLabel(status: string): string {
     return humanizeStatus(status);
 }
 
+function factoryLabel(payload: FollowUpItem): string {
+    return [payload.factory_name, payload.factory_location].filter(Boolean).join(' - ') || '-';
+}
+
 function formatDateTime(value: string | null): string {
     if (!value) {
         return '-';
@@ -577,6 +739,18 @@ function formatDateTime(value: string | null): string {
     });
 }
 
+function formatDate(value: string | null): string {
+    if (!value) {
+        return '-';
+    }
+
+    return new Date(value.replace(' ', 'T')).toLocaleDateString(undefined, {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    });
+}
+
 function toDateTimeLocal(value: string | null): string {
     if (!value) {
         return '';
@@ -585,7 +759,84 @@ function toDateTimeLocal(value: string | null): string {
     return value.replace(' ', 'T').slice(0, 16);
 }
 
-function applyItem(payload: FollowUpItem): void {
+function toDateInput(value: string | null): string {
+    if (!value) {
+        return '';
+    }
+
+    return value.replace(' ', 'T').slice(0, 10);
+}
+
+function todayDateInput(): string {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Muscat',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date());
+    const valueByPart = new Map(parts.map((part) => [part.type, part.value]));
+
+    return `${valueByPart.get('year')}-${valueByPart.get('month')}-${valueByPart.get('day')}`;
+}
+
+function paymentPlanForm(plan: PaymentPlanFollowUpRecord): { paid_amount: string; paid_at: string; payment_reference: string; remarks: string; attachment_remarks: string } {
+    if (!paymentPlanForms[plan.id]) {
+        paymentPlanForms[plan.id] = {
+            paid_amount: plan.paid_amount ?? plan.expected_amount ?? '',
+            paid_at: toDateInput(plan.paid_at) || todayDateInput(),
+            payment_reference: plan.payment_reference ?? '',
+            remarks: plan.remarks ?? '',
+            attachment_remarks: '',
+        };
+    }
+
+    return paymentPlanForms[plan.id];
+}
+
+function clearReactiveRecord<T>(record: Record<string, T> | Record<number, T>): void {
+    for (const key of Object.keys(record)) {
+        delete (record as Record<string, T>)[key];
+    }
+}
+
+function resetFollowUpState(): void {
+    item.value = null;
+    activeFollowUpStep.value = 'acknowledgement';
+    hasSelectedFollowUpStep.value = false;
+    acknowledgementFile.value = null;
+    signedDeliveryOrderFile.value = null;
+    clearReactiveRecord(shippingDocumentFiles);
+    clearReactiveRecord(shippingDocumentForms);
+    clearReactiveRecord(paymentPlanFiles);
+    clearReactiveRecord(paymentPlanForms);
+    Object.assign(reminderForm, { reminder_interval_value: 2, reminder_interval_unit: 'weeks', next_follow_up_at: '' });
+    Object.assign(commentForm, { comment: '', communication_type: 'email', contacted_person: '', next_action: '' });
+    Object.assign(acknowledgementForm, { acknowledgement_received_at: '', acknowledgement_notes: '' });
+    Object.assign(logisticsForm, { delivery_responsibility: 'isc', eta_at: '', agent_name: '', agent_contact: '', remarks: '' });
+    Object.assign(logisticsEventForm, {
+        documents_sent_at: '',
+        arrived_at: '',
+        warehouse_received_at: '',
+        buyer_received_at: '',
+        received_location: '',
+        received_quantity: '',
+        goods_condition: '',
+        remarks: '',
+    });
+    Object.assign(deliveryOrderForm, { delivery_place: '', quantity: '', terms: '', signed_at: '' });
+    Object.assign(invoiceForm, { quantity: '', payment_term_days: 45, vat_rate: '0', vat_exception_reason: '', bank_details: '', remarks: '' });
+    Object.assign(paymentForm, { invoice_id: null, amount: '', payment_date: '', payment_reference: '', remarks: '' });
+    Object.assign(closeForm, { closed_notes: '' });
+}
+
+function applyItem(
+    payload: FollowUpItem,
+    options: { preservePaymentPlanDrafts?: boolean; resetPaymentPlanId?: number } = { preservePaymentPlanDrafts: true },
+): void {
+    if (payload.id !== itemId.value) {
+        return;
+    }
+
     item.value = payload;
     reminderForm.reminder_interval_value = payload.reminder_interval_value ?? 2;
     reminderForm.reminder_interval_unit = payload.reminder_interval_unit ?? 'weeks';
@@ -611,19 +862,51 @@ function applyItem(payload: FollowUpItem): void {
     logisticsEventForm.warehouse_received_at = toDateTimeLocal(payload.logistics_case?.warehouse_received_at ?? null);
     logisticsEventForm.buyer_received_at = toDateTimeLocal(payload.logistics_case?.buyer_received_at ?? null);
     logisticsEventForm.received_location = payload.logistics_case?.received_location ?? '';
-    logisticsEventForm.received_quantity = payload.logistics_case?.received_quantity ?? payload.quantity ?? '';
+    logisticsEventForm.received_quantity =
+        decimalValue(payload.fulfilment.remaining_receive_quantity) > 0
+            ? payload.fulfilment.remaining_receive_quantity
+            : payload.logistics_case?.received_quantity ?? payload.quantity ?? '';
     logisticsEventForm.goods_condition = payload.logistics_case?.goods_condition ?? '';
 
     deliveryOrderForm.delivery_place = payload.delivery_order?.delivery_place ?? deliveryOrderForm.delivery_place;
+    deliveryOrderForm.quantity = decimalValue(payload.fulfilment.remaining_delivery_quantity) > 0 ? payload.fulfilment.remaining_delivery_quantity : '';
     deliveryOrderForm.terms = payload.delivery_order?.terms ?? deliveryOrderForm.terms;
     deliveryOrderForm.signed_at = toDateTimeLocal(payload.delivery_order?.signed_at ?? null);
 
-    invoiceForm.payment_term_days = payload.invoice?.payment_term_days ?? invoiceForm.payment_term_days;
+    invoiceForm.quantity = decimalValue(payload.fulfilment.remaining_invoice_quantity) > 0 ? payload.fulfilment.remaining_invoice_quantity : '';
+    invoiceForm.payment_term_days = payload.invoice?.payment_term_days ?? payload.quotation_payment_term_days ?? invoiceForm.payment_term_days;
     invoiceForm.vat_rate = payload.invoice?.vat_rate ?? payload.quotation_item_vat_rate ?? '0.000';
     invoiceForm.vat_exception_reason = payload.invoice?.vat_exception_reason ?? '';
     invoiceForm.bank_details = payload.invoice?.bank_details ?? invoiceForm.bank_details;
     invoiceForm.remarks = payload.invoice?.remarks ?? invoiceForm.remarks;
-    paymentForm.amount = payload.invoice?.balance_amount && payload.invoice.payment_status !== 'paid' && payload.invoice.payment_status !== 'closed' ? payload.invoice.balance_amount : '';
+    const paymentInvoice = payload.invoices.find((invoice) => Number(invoice.balance_amount) > 0 && !['paid', 'closed'].includes(invoice.payment_status)) ?? payload.invoice;
+    paymentForm.invoice_id = paymentInvoice?.id ?? null;
+    paymentForm.amount = paymentInvoice?.balance_amount && !['paid', 'closed'].includes(paymentInvoice.payment_status) ? paymentInvoice.balance_amount : '';
+    const paymentPlanIds = new Set(payload.payment_plan_follow_ups.map((plan) => plan.id));
+    if (!options.preservePaymentPlanDrafts) {
+        for (const planId of Object.keys(paymentPlanForms).map(Number)) {
+            if (!paymentPlanIds.has(planId)) {
+                delete paymentPlanForms[planId];
+                delete paymentPlanFiles[planId];
+            }
+        }
+    }
+
+    for (const plan of payload.payment_plan_follow_ups) {
+        const shouldRefreshPlanDraft = !options.preservePaymentPlanDrafts || !paymentPlanForms[plan.id] || options.resetPaymentPlanId === plan.id;
+        if (shouldRefreshPlanDraft) {
+            paymentPlanForms[plan.id] = {
+                paid_amount: plan.paid_amount ?? plan.expected_amount ?? '',
+                paid_at: toDateInput(plan.paid_at) || todayDateInput(),
+                payment_reference: plan.payment_reference ?? '',
+                remarks: plan.remarks ?? '',
+                attachment_remarks: '',
+            };
+        }
+        if (!options.preservePaymentPlanDrafts || options.resetPaymentPlanId === plan.id) {
+            paymentPlanFiles[plan.id] = null;
+        }
+    }
     closeForm.closed_notes = payload.closed_notes ?? closeForm.closed_notes;
 
     const activeStepStillAvailable = followUpSteps.value.some((step) => step.key === activeFollowUpStep.value && step.available);
@@ -633,16 +916,26 @@ function applyItem(payload: FollowUpItem): void {
     }
 }
 
+let loadRequestSequence = 0;
+
 async function loadItem(): Promise<void> {
+    const requestedItemId = itemId.value;
+    const requestSequence = ++loadRequestSequence;
     isLoading.value = true;
 
     try {
-        const payload = await requestJson<{ data: FollowUpItem }>(`/api/follow-up/${itemId.value}`);
-        applyItem(payload.data);
+        const payload = await requestJson<{ data: FollowUpItem }>(`/api/follow-up/${requestedItemId}`);
+        if (requestSequence === loadRequestSequence && requestedItemId === itemId.value) {
+            applyItem(payload.data, { preservePaymentPlanDrafts: false });
+        }
     } catch (error) {
-        showToast('error', error instanceof Error ? error.message : 'Unable to load follow-up item.');
+        if (requestSequence === loadRequestSequence) {
+            showToast('error', error instanceof Error ? error.message : 'Unable to load follow-up item.');
+        }
     } finally {
-        isLoading.value = false;
+        if (requestSequence === loadRequestSequence) {
+            isLoading.value = false;
+        }
     }
 }
 
@@ -937,7 +1230,11 @@ async function saveDeliveryOrder(): Promise<void> {
     try {
         const payload = await requestJson<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/delivery-order`, {
             method: 'POST',
-            body: JSON.stringify(deliveryOrderForm),
+            body: JSON.stringify({
+                delivery_place: deliveryOrderForm.delivery_place,
+                quantity: deliveryOrderForm.quantity || null,
+                terms: deliveryOrderForm.terms,
+            }),
         });
 
         applyItem(payload.data);
@@ -986,6 +1283,7 @@ async function saveInvoice(): Promise<void> {
         const payload = await requestJson<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/invoice`, {
             method: 'POST',
             body: JSON.stringify({
+                quantity: invoiceForm.quantity || null,
                 payment_term_days: Number(invoiceForm.payment_term_days),
                 vat_exception_reason: invoiceForm.vat_exception_reason,
                 bank_details: invoiceForm.bank_details,
@@ -1002,25 +1300,39 @@ async function saveInvoice(): Promise<void> {
     }
 }
 
-async function downloadDeliveryOrder(format: 'docx' | 'pdf'): Promise<void> {
-    if (!item.value?.delivery_order) {
+async function downloadDeliveryOrder(format: 'docx' | 'pdf', deliveryOrder: DeliveryOrder | null = item.value?.delivery_order ?? null): Promise<void> {
+    if (!deliveryOrder) {
         return;
     }
 
     try {
-        await downloadProtectedFile(item.value.delivery_order.downloads[format], `${item.value.delivery_order.delivery_order_reference}.${format}`);
+        const filename = `${deliveryOrder.delivery_order_reference}.${format}`;
+        await downloadProtectedFile(deliveryOrder.downloads[format], format === 'docx' ? filename.toUpperCase() : filename);
     } catch (error) {
         showToast('error', error instanceof Error ? error.message : 'Unable to download delivery order.');
     }
 }
 
-async function downloadInvoice(format: 'docx' | 'pdf'): Promise<void> {
-    if (!item.value?.invoice) {
+async function downloadUploadedEvidence(downloadUrl: string | null, fallbackFilename: string, description: string): Promise<void> {
+    if (!downloadUrl) {
         return;
     }
 
     try {
-        await downloadProtectedFile(item.value.invoice.downloads[format], `${item.value.invoice.invoice_reference}.${format}`);
+        await downloadProtectedFile(downloadUrl, fallbackFilename);
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : `Unable to download ${description}.`);
+    }
+}
+
+async function downloadInvoice(format: 'docx' | 'pdf', invoice: InvoiceRecord | null = item.value?.invoice ?? null): Promise<void> {
+    if (!invoice) {
+        return;
+    }
+
+    try {
+        const filename = `${invoice.invoice_reference}.${format}`;
+        await downloadProtectedFile(invoice.downloads[format], format === 'docx' ? filename.toUpperCase() : filename);
     } catch (error) {
         showToast('error', error instanceof Error ? error.message : 'Unable to download invoice.');
     }
@@ -1038,6 +1350,7 @@ async function markInvoiceSent(): Promise<void> {
         const payload = await requestJson<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/invoice/sent`, {
             method: 'POST',
             body: JSON.stringify({
+                invoice_id: selectedPaymentInvoice.value?.id ?? null,
                 sent_at: now.toISOString(),
             }),
         });
@@ -1062,6 +1375,7 @@ async function savePayment(): Promise<void> {
         const payload = await requestJson<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/payments`, {
             method: 'POST',
             body: JSON.stringify({
+                invoice_id: paymentForm.invoice_id,
                 amount: paymentForm.amount,
                 payment_date: paymentForm.payment_date,
                 payment_reference: paymentForm.payment_reference,
@@ -1077,6 +1391,102 @@ async function savePayment(): Promise<void> {
         showToast('error', error instanceof Error ? error.message : 'Unable to record payment.');
     } finally {
         isSavingPayment.value = false;
+    }
+}
+
+function selectPaymentPlanFile(planId: number, event: Event): void {
+    paymentPlanFiles[planId] = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+function paymentPlanDueLabel(plan: PaymentPlanFollowUpRecord): string {
+    if (plan.status === 'paid') {
+        return 'Paid';
+    }
+
+    if (plan.due_state === 'overdue') {
+        return `Overdue since ${formatDate(plan.due_date)}`;
+    }
+
+    if (plan.due_state === 'due_today') {
+        return 'Due today';
+    }
+
+    if (plan.due_state === 'unscheduled') {
+        return 'Waiting for trigger';
+    }
+
+    return `Due ${formatDate(plan.due_date)}`;
+}
+
+function paymentPlanPillClass(plan: PaymentPlanFollowUpRecord): string {
+    if (plan.status === 'paid') {
+        return 'teal';
+    }
+
+    if (plan.due_state === 'overdue') {
+        return 'amber';
+    }
+
+    return 'slate';
+}
+
+async function markPaymentPlanPaid(plan: PaymentPlanFollowUpRecord): Promise<void> {
+    const form = paymentPlanForm(plan);
+
+    if (Number(form.paid_amount) <= 0) {
+        showToast('error', 'Enter the paid amount for this plan line.');
+        return;
+    }
+
+    isSavingPaymentPlanId.value = plan.id;
+
+    try {
+        const formData = new FormData();
+        formData.append('paid_amount', form.paid_amount);
+        formData.append('paid_at', form.paid_at);
+        formData.append('payment_reference', form.payment_reference);
+        formData.append('remarks', form.remarks);
+        formData.append('attachment_remarks', form.attachment_remarks);
+
+        if (paymentPlanFiles[plan.id]) {
+            formData.append('attachment_file', paymentPlanFiles[plan.id] as File);
+        }
+
+        const payload = await requestFormData<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/payment-plan/${plan.id}/paid`, formData);
+        applyItem(payload.data, { preservePaymentPlanDrafts: true, resetPaymentPlanId: plan.id });
+        paymentPlanFiles[plan.id] = null;
+        showToast('success', payload.message);
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to mark payment plan as paid.');
+    } finally {
+        isSavingPaymentPlanId.value = null;
+    }
+}
+
+async function uploadPaymentPlanAttachment(plan: PaymentPlanFollowUpRecord): Promise<void> {
+    const file = paymentPlanFiles[plan.id];
+
+    if (!file) {
+        showToast('error', 'Choose a payment document first.');
+        return;
+    }
+
+    isUploadingPaymentPlanAttachmentId.value = plan.id;
+
+    try {
+        const form = paymentPlanForm(plan);
+        const formData = new FormData();
+        formData.append('attachment_file', file);
+        formData.append('attachment_remarks', form.attachment_remarks);
+
+        const payload = await requestFormData<{ message: string; data: FollowUpItem }>(`/api/follow-up/${itemId.value}/payment-plan/${plan.id}/attachments`, formData);
+        applyItem(payload.data, { preservePaymentPlanDrafts: true, resetPaymentPlanId: plan.id });
+        paymentPlanFiles[plan.id] = null;
+        showToast('success', payload.message);
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to upload payment document.');
+    } finally {
+        isUploadingPaymentPlanAttachmentId.value = null;
     }
 }
 
@@ -1102,7 +1512,30 @@ async function closeJob(): Promise<void> {
     }
 }
 
-onMounted(loadItem);
+watch(
+    itemId,
+    (id) => {
+        resetFollowUpState();
+        if (!Number.isInteger(id) || id <= 0) {
+            loadRequestSequence += 1;
+            isLoading.value = false;
+            return;
+        }
+        void loadItem();
+    },
+    { immediate: true },
+);
+
+watch(
+    () => paymentForm.invoice_id,
+    (invoiceId) => {
+        const invoice = item.value?.invoices.find((candidate) => candidate.id === invoiceId) ?? null;
+
+        if (invoice && !['paid', 'closed'].includes(invoice.payment_status)) {
+            paymentForm.amount = invoice.balance_amount;
+        }
+    },
+);
 </script>
 
 <template>
@@ -1138,7 +1571,7 @@ onMounted(loadItem);
                     <header>
                         <div>
                             <p>Traceability</p>
-                            <h2>{{ item.title ?? item.product_name }}</h2>
+                            <h2>{{ item.product_code ? `${item.product_code} - ` : '' }}{{ item.title ?? item.product_name }}</h2>
                         </div>
                         <span class="stage-pill" :class="item.status === 'acknowledged' ? 'teal' : 'amber'">
                             {{ statusLabel(item.status) }}
@@ -1149,17 +1582,61 @@ onMounted(loadItem);
                         <span>Quotation</span>
                         <strong>{{ item.quotation_reference ?? '-' }}</strong>
                         <span>Buyer PO</span>
-                        <strong>{{ item.buyer_po_number ?? '-' }}</strong>
+                        <strong>
+                            <button
+                                v-if="item.buyer_po_download_url"
+                                class="table-link-button"
+                                type="button"
+                                @click="downloadUploadedEvidence(item.buyer_po_download_url, item.buyer_po_original_file_name ?? `buyer-po-${item.buyer_po_number ?? item.id}`, 'the buyer PO')"
+                            >
+                                <Download :size="14" aria-hidden="true" />
+                                {{ item.buyer_po_number ?? item.buyer_po_original_file_name ?? 'Buyer PO' }}
+                            </button>
+                            <template v-else>{{ item.buyer_po_number ?? '-' }}</template>
+                        </strong>
                         <span>Supplier PO</span>
                         <strong>{{ item.supplier_po_reference ?? '-' }}</strong>
                         <span>Buyer</span>
                         <strong>{{ item.buyer_company_name ?? '-' }}</strong>
                         <span>Supplier</span>
                         <strong>{{ item.supplier_company_name ?? '-' }}</strong>
+                        <span>Factory</span>
+                        <strong>{{ factoryLabel(item) }}</strong>
                         <span>Manufacturer</span>
                         <strong>{{ item.manufacturer_name ?? '-' }}</strong>
+                        <span>Material / Item Code</span>
+                        <strong>{{ item.product_code ?? '-' }}</strong>
                         <span>Quantity</span>
                         <strong>{{ item.quantity }} {{ item.uom }}</strong>
+                    </div>
+                </article>
+
+                <article class="follow-up-panel fulfilment-panel">
+                    <header>
+                        <div>
+                            <p>Item Fulfilment</p>
+                            <h2>{{ item.fulfilment.received_quantity }} / {{ item.fulfilment.supplier_quantity }} {{ item.fulfilment.uom ?? item.uom }}</h2>
+                        </div>
+                        <PackageCheck :size="22" aria-hidden="true" />
+                    </header>
+
+                    <div class="trace-grid">
+                        <span>Remaining Receipt</span>
+                        <strong>{{ item.fulfilment.remaining_receive_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                        <span>Delivered</span>
+                        <strong>{{ item.fulfilment.delivered_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                        <span>Remaining Delivery</span>
+                        <strong>{{ item.fulfilment.remaining_delivery_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                        <span>Invoiced Qty</span>
+                        <strong>{{ item.fulfilment.invoiced_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                        <span>Remaining Invoice</span>
+                        <strong>{{ item.fulfilment.remaining_invoice_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                        <span>Quotation Total</span>
+                        <strong>{{ item.fulfilment.currency ?? '' }} {{ item.fulfilment.quotation_total_amount }}</strong>
+                        <span>Paid</span>
+                        <strong>{{ item.fulfilment.currency ?? '' }} {{ item.fulfilment.paid_amount }}</strong>
+                        <span>Pending From Quotation</span>
+                        <strong>{{ item.fulfilment.currency ?? '' }} {{ item.fulfilment.remaining_quotation_amount }}</strong>
                     </div>
                 </article>
 
@@ -1199,6 +1676,117 @@ onMounted(loadItem);
                         </button>
                     </form>
                 </article>
+
+                <article class="follow-up-panel payment-agreement-panel">
+                    <header>
+                        <div>
+                            <p>Payment Agreement</p>
+                            <h2>{{ item.quotation_payment_customer_type_label }}</h2>
+                        </div>
+                        <ReceiptText :size="22" aria-hidden="true" />
+                    </header>
+
+                    <div v-if="item.payment_plan_follow_ups.length > 0" class="payment-plan-follow-up-list">
+                        <article v-for="plan in item.payment_plan_follow_ups" :key="plan.id" class="payment-plan-card" :class="plan.due_state">
+                            <div class="payment-plan-card-top">
+                                <div>
+                                    <strong>{{ plan.label }} - {{ plan.payment_percentage }}%</strong>
+                                    <span>{{ plan.payment_method_label }} | {{ plan.due_text }}</span>
+                                    <small>{{ paymentPlanDueLabel(plan) }}</small>
+                                </div>
+                                <span class="stage-pill" :class="paymentPlanPillClass(plan)">
+                                    {{ plan.status === 'paid' ? 'Paid' : 'Pending' }}
+                                </span>
+                            </div>
+
+                            <div class="payment-plan-meta-grid">
+                                <span>Expected</span>
+                                <strong>{{ plan.currency ?? '' }} {{ plan.expected_amount ?? '-' }}</strong>
+                                <span>Paid</span>
+                                <strong>{{ plan.paid_amount ? `${plan.currency ?? ''} ${plan.paid_amount}` : '-' }}</strong>
+                                <span>Reference</span>
+                                <strong>{{ plan.payment_reference ?? '-' }}</strong>
+                                <span>Recorded By</span>
+                                <strong>{{ plan.recorded_by_name ?? '-' }}</strong>
+                            </div>
+
+                            <form v-if="plan.status !== 'paid'" class="payment-plan-action-form" @submit.prevent="markPaymentPlanPaid(plan)">
+                                <label>
+                                    <span>Paid Amount</span>
+                                    <input v-model="paymentPlanForms[plan.id].paid_amount" type="number" min="0.001" step="0.001" required />
+                                </label>
+                                <label>
+                                    <span>Paid Date</span>
+                                    <input v-model="paymentPlanForms[plan.id].paid_at" type="date" required />
+                                </label>
+                                <label>
+                                    <span>Reference</span>
+                                    <input v-model="paymentPlanForms[plan.id].payment_reference" type="text" placeholder="Cheque / transfer no." />
+                                </label>
+                                <label>
+                                    <span>Receipt / Document</span>
+                                    <input type="file" @change="selectPaymentPlanFile(plan.id, $event)" />
+                                </label>
+                                <label class="payment-plan-wide">
+                                    <span>Remarks</span>
+                                    <input v-model="paymentPlanForms[plan.id].remarks" type="text" placeholder="Payment notes" />
+                                </label>
+                                <label class="payment-plan-wide">
+                                    <span>Document Remarks</span>
+                                    <input v-model="paymentPlanForms[plan.id].attachment_remarks" type="text" placeholder="Optional attachment note" />
+                                </label>
+                                <button class="primary-action compact-action payment-plan-wide" type="submit" :disabled="isSavingPaymentPlanId === plan.id">
+                                    <Loader2 v-if="isSavingPaymentPlanId === plan.id" class="spin-icon" :size="17" aria-hidden="true" />
+                                    <CheckCircle2 v-else :size="17" aria-hidden="true" />
+                                    Mark Paid
+                                </button>
+                            </form>
+
+                            <form v-else class="payment-plan-action-form compact-upload-form" @submit.prevent="uploadPaymentPlanAttachment(plan)">
+                                <label>
+                                    <span>Add Document</span>
+                                    <input type="file" @change="selectPaymentPlanFile(plan.id, $event)" />
+                                </label>
+                                <label>
+                                    <span>Remarks</span>
+                                    <input v-model="paymentPlanForms[plan.id].attachment_remarks" type="text" />
+                                </label>
+                                <button class="secondary-action compact-action" type="submit" :disabled="isUploadingPaymentPlanAttachmentId === plan.id">
+                                    <Loader2 v-if="isUploadingPaymentPlanAttachmentId === plan.id" class="spin-icon" :size="17" aria-hidden="true" />
+                                    <Upload v-else :size="17" aria-hidden="true" />
+                                    Upload Document
+                                </button>
+                            </form>
+
+                            <div v-if="plan.attachments.length > 0" class="payment-plan-attachment-list">
+                                <span v-for="attachment in plan.attachments" :key="attachment.id">
+                                    <button
+                                        v-if="attachment.download_url"
+                                        class="table-link-button"
+                                        type="button"
+                                        @click="downloadUploadedEvidence(attachment.download_url, attachment.original_file_name ?? 'payment-document', 'the payment document')"
+                                    >
+                                        <Download :size="14" aria-hidden="true" />
+                                        {{ attachment.original_file_name ?? 'Attachment' }}
+                                    </button>
+                                    <template v-else>{{ attachment.original_file_name ?? 'Attachment' }}</template>
+                                    <small>uploaded {{ formatDateTime(attachment.created_at) }} by {{ attachment.uploaded_by_name ?? 'User' }}</small>
+                                </span>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div v-else class="payment-agreement-list">
+                        <article v-for="schedule in item.quotation_payment_schedules" :key="schedule.id">
+                            <strong>{{ schedule.label }} - {{ schedule.payment_percentage }}%</strong>
+                            <span>{{ schedule.payment_method_label }} | {{ schedule.due_text }}</span>
+                            <small v-if="schedule.notes">{{ schedule.notes }}</small>
+                        </article>
+                        <p v-if="item.quotation_payment_schedules.length === 0" class="empty-note">
+                            {{ item.quotation_payment_schedule_summary ?? 'No payment schedule recorded.' }}
+                        </p>
+                    </div>
+                </article>
             </section>
 
             <section class="workflow-stepper" aria-label="Follow-up workflow">
@@ -1237,7 +1825,18 @@ onMounted(loadItem);
                         <span>By</span>
                         <strong>{{ item.acknowledged_by_name ?? '-' }}</strong>
                         <span>File</span>
-                        <strong>{{ item.acknowledgement_original_file_name ?? '-' }}</strong>
+                        <strong>
+                            <button
+                                v-if="item.acknowledgement_download_url"
+                                class="table-link-button"
+                                type="button"
+                                @click="downloadUploadedEvidence(item.acknowledgement_download_url, item.acknowledgement_original_file_name ?? 'acknowledgement', 'the acknowledgement')"
+                            >
+                                <Download :size="14" aria-hidden="true" />
+                                {{ item.acknowledgement_original_file_name ?? 'Download acknowledgement' }}
+                            </button>
+                            <template v-else>{{ item.acknowledgement_original_file_name ?? '-' }}</template>
+                        </strong>
                     </div>
 
                     <form class="follow-up-form" @submit.prevent="saveAcknowledgement">
@@ -1296,11 +1895,22 @@ onMounted(loadItem);
                                 <span>File</span>
                                 <input type="file" @change="selectShippingDocumentFile(document.document_type, $event)" />
                             </label>
-                            <button class="secondary-action compact-action" type="button" :disabled="isSavingDocumentType === document.document_type" @click="uploadShippingDocument(document)">
-                                <Loader2 v-if="isSavingDocumentType === document.document_type" class="spin-icon" :size="17" aria-hidden="true" />
-                                <Upload v-else :size="17" aria-hidden="true" />
-                                Upload
-                            </button>
+                            <div class="shipping-document-actions">
+                                <button class="secondary-action compact-action" type="button" :disabled="isSavingDocumentType === document.document_type" @click="uploadShippingDocument(document)">
+                                    <Loader2 v-if="isSavingDocumentType === document.document_type" class="spin-icon" :size="17" aria-hidden="true" />
+                                    <Upload v-else :size="17" aria-hidden="true" />
+                                    Upload
+                                </button>
+                                <button
+                                    v-if="document.download_url"
+                                    class="table-link-button"
+                                    type="button"
+                                    @click="downloadUploadedEvidence(document.download_url, document.original_file_name ?? document.label, document.label)"
+                                >
+                                    <Download :size="14" aria-hidden="true" />
+                                    Download
+                                </button>
+                            </div>
                         </article>
 
                         <div class="shipping-document-subtitle">
@@ -1327,11 +1937,22 @@ onMounted(loadItem);
                                 <span>File</span>
                                 <input type="file" @change="selectShippingDocumentFile(document.document_type, $event)" />
                             </label>
-                            <button class="secondary-action compact-action" type="button" :disabled="isSavingDocumentType === document.document_type" @click="uploadShippingDocument(document)">
-                                <Loader2 v-if="isSavingDocumentType === document.document_type" class="spin-icon" :size="17" aria-hidden="true" />
-                                <Upload v-else :size="17" aria-hidden="true" />
-                                Upload
-                            </button>
+                            <div class="shipping-document-actions">
+                                <button class="secondary-action compact-action" type="button" :disabled="isSavingDocumentType === document.document_type" @click="uploadShippingDocument(document)">
+                                    <Loader2 v-if="isSavingDocumentType === document.document_type" class="spin-icon" :size="17" aria-hidden="true" />
+                                    <Upload v-else :size="17" aria-hidden="true" />
+                                    Upload
+                                </button>
+                                <button
+                                    v-if="document.download_url"
+                                    class="table-link-button"
+                                    type="button"
+                                    @click="downloadUploadedEvidence(document.download_url, document.original_file_name ?? document.label, document.label)"
+                                >
+                                    <Download :size="14" aria-hidden="true" />
+                                    Download
+                                </button>
+                            </div>
                         </article>
                     </div>
 
@@ -1354,13 +1975,13 @@ onMounted(loadItem);
                     </header>
 
                     <p v-if="activeFollowUpStep === 'logistics' && !item.shipping_documents_complete" class="logistics-gate">
-                        Complete shipping documents before ETA can start.
+                        Shipping documents pending.
                     </p>
 
                     <form v-if="activeFollowUpStep === 'logistics'" class="follow-up-form logistics-form-grid" @submit.prevent="saveEta">
                         <label>
                             <span>Delivery Responsibility</span>
-                            <select v-model="logisticsForm.delivery_responsibility" :disabled="!item.shipping_documents_complete || isSavingLogistics !== null">
+                            <select v-model="logisticsForm.delivery_responsibility" :disabled="isSavingLogistics !== null">
                                 <option value="isc">ISC / Internal Delivery</option>
                                 <option value="buyer_agent">Buyer Agent</option>
                                 <option value="supplier">Supplier / Manufacturer</option>
@@ -1368,19 +1989,19 @@ onMounted(loadItem);
                         </label>
                         <label>
                             <span>ETA</span>
-                            <input v-model="logisticsForm.eta_at" type="datetime-local" :disabled="!item.shipping_documents_complete || isSavingLogistics !== null" />
+                            <input v-model="logisticsForm.eta_at" type="datetime-local" :disabled="isSavingLogistics !== null" />
                         </label>
                         <label>
                             <span>Agent Name</span>
-                            <input v-model="logisticsForm.agent_name" type="text" :disabled="!item.shipping_documents_complete || isSavingLogistics !== null" />
+                            <input v-model="logisticsForm.agent_name" type="text" :disabled="isSavingLogistics !== null" />
                         </label>
                         <label>
                             <span>Agent Contact</span>
-                            <input v-model="logisticsForm.agent_contact" type="text" :disabled="!item.shipping_documents_complete || isSavingLogistics !== null" />
+                            <input v-model="logisticsForm.agent_contact" type="text" :disabled="isSavingLogistics !== null" />
                         </label>
                         <label class="logistics-wide">
                             <span>ETA Remarks</span>
-                            <textarea v-model="logisticsForm.remarks" rows="3" :disabled="!item.shipping_documents_complete || isSavingLogistics !== null"></textarea>
+                            <textarea v-model="logisticsForm.remarks" rows="3" :disabled="isSavingLogistics !== null"></textarea>
                         </label>
                         <button class="primary-action compact-action logistics-wide" type="submit" :disabled="!canSaveEta">
                             <Loader2 v-if="isSavingLogistics === 'eta'" class="spin-icon" :size="17" aria-hidden="true" />
@@ -1497,8 +2118,8 @@ onMounted(loadItem);
                         <ClipboardCheck :size="22" aria-hidden="true" />
                     </header>
 
-                    <p v-if="!item.delivery_order && item.status !== 'ready_for_delivery_order'" class="logistics-gate">
-                        Goods must be received at ISC warehouse before the delivery order can be created.
+                    <p v-if="remainingDeliveryQuantity <= 0" class="logistics-gate">
+                        Goods must be received at ISC warehouse before another delivery order can be created.
                     </p>
 
                     <div v-if="item.delivery_order" class="document-summary">
@@ -1506,6 +2127,8 @@ onMounted(loadItem);
                         <strong>{{ statusLabel(item.delivery_order.status) }}</strong>
                         <span>Date</span>
                         <strong>{{ item.delivery_order.delivery_order_date ?? '-' }}</strong>
+                        <span>Quantity</span>
+                        <strong>{{ item.delivery_order.total_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
                         <span>Signed Copy</span>
                         <strong>{{ item.delivery_order.signed_original_file_name ?? '-' }}</strong>
                     </div>
@@ -1514,6 +2137,10 @@ onMounted(loadItem);
                         <label>
                             <span>Delivery Place</span>
                             <input v-model="deliveryOrderForm.delivery_place" type="text" placeholder="OXY Yard, Muscat" required />
+                        </label>
+                        <label>
+                            <span>Delivery Qty</span>
+                            <input v-model="deliveryOrderForm.quantity" type="number" min="0.001" step="0.001" :max="item.fulfilment.remaining_delivery_quantity" />
                         </label>
                         <label>
                             <span>Terms</span>
@@ -1527,14 +2154,50 @@ onMounted(loadItem);
                     </form>
 
                     <div v-if="item.delivery_order" class="document-downloads">
-                        <button class="table-link-button" type="button" @click="downloadDeliveryOrder('docx')">
+                        <button class="table-link-button" type="button" @click="downloadDeliveryOrder('docx', item.delivery_order)">
                             <Download :size="15" aria-hidden="true" />
                             Word
                         </button>
-                        <button class="table-link-button" type="button" @click="downloadDeliveryOrder('pdf')">
+                        <button class="table-link-button" type="button" @click="downloadDeliveryOrder('pdf', item.delivery_order)">
                             <Download :size="15" aria-hidden="true" />
                             PDF
                         </button>
+                        <button
+                            v-if="item.delivery_order.signed_download_url"
+                            class="table-link-button"
+                            type="button"
+                            @click="downloadUploadedEvidence(item.delivery_order.signed_download_url, item.delivery_order.signed_original_file_name ?? 'signed-delivery-order', 'the signed delivery order')"
+                        >
+                            <Download :size="15" aria-hidden="true" />
+                            Signed Copy
+                        </button>
+                    </div>
+
+                    <div v-if="item.delivery_orders.length > 0" class="payment-list">
+                        <article v-for="deliveryOrder in item.delivery_orders" :key="deliveryOrder.id">
+                            <strong>{{ deliveryOrder.delivery_order_reference }} | {{ deliveryOrder.total_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
+                            <span>{{ statusLabel(deliveryOrder.status) }} | {{ deliveryOrder.delivery_order_date ?? '-' }}</span>
+                            <small>{{ deliveryOrder.items[0]?.buyer_item_code ? `Buyer Item ${deliveryOrder.items[0].buyer_item_code}` : 'Buyer item code not set' }}</small>
+                            <div class="document-downloads">
+                                <button class="table-link-button" type="button" @click="downloadDeliveryOrder('docx', deliveryOrder)">
+                                    <Download :size="15" aria-hidden="true" />
+                                    Word
+                                </button>
+                                <button class="table-link-button" type="button" @click="downloadDeliveryOrder('pdf', deliveryOrder)">
+                                    <Download :size="15" aria-hidden="true" />
+                                    PDF
+                                </button>
+                                <button
+                                    v-if="deliveryOrder.signed_download_url"
+                                    class="table-link-button"
+                                    type="button"
+                                    @click="downloadUploadedEvidence(deliveryOrder.signed_download_url, deliveryOrder.signed_original_file_name ?? 'signed-delivery-order', 'the signed delivery order')"
+                                >
+                                    <Download :size="15" aria-hidden="true" />
+                                    Signed
+                                </button>
+                            </div>
+                        </article>
                     </div>
 
                     <form v-if="item.delivery_order" class="follow-up-form signed-do-form" @submit.prevent="uploadSignedDeliveryOrder">
@@ -1563,8 +2226,11 @@ onMounted(loadItem);
                         <ReceiptText :size="22" aria-hidden="true" />
                     </header>
 
-                    <p v-if="!item.invoice && item.status !== 'ready_for_invoice'" class="logistics-gate">
+                    <p v-if="remainingInvoiceQuantity <= 0 && item.invoices.length === 0" class="logistics-gate">
                         Invoice can be created after signed DO upload, buyer receipt confirmation, or supplier receipt acknowledgement.
+                    </p>
+                    <p v-else-if="remainingInvoiceQuantity <= 0" class="logistics-gate">
+                        All delivered quantity has been invoiced.
                     </p>
 
                     <div v-if="item.invoice" class="document-summary invoice-summary">
@@ -1572,11 +2238,17 @@ onMounted(loadItem);
                         <strong>{{ statusLabel(item.invoice.status) }}</strong>
                         <span>Due Date</span>
                         <strong>{{ item.invoice.due_date ?? '-' }}</strong>
+                        <span>Quantity</span>
+                        <strong>{{ item.invoice.total_quantity }} {{ item.fulfilment.uom ?? item.uom }}</strong>
                         <span>Total</span>
                         <strong>{{ item.invoice.currency }} {{ item.invoice.total_amount }}</strong>
                     </div>
 
                     <form class="follow-up-form invoice-form-grid" @submit.prevent="saveInvoice">
+                        <label>
+                            <span>Invoice Qty</span>
+                            <input v-model="invoiceForm.quantity" type="number" min="0.001" step="0.001" :max="item.fulfilment.remaining_invoice_quantity" />
+                        </label>
                         <label>
                             <span>Payment Days</span>
                             <input v-model.number="invoiceForm.payment_term_days" type="number" min="0" max="3650" required />
@@ -1614,14 +2286,32 @@ onMounted(loadItem);
                     </div>
 
                     <div v-if="item.invoice" class="document-downloads">
-                        <button class="table-link-button" type="button" @click="downloadInvoice('docx')">
+                        <button class="table-link-button" type="button" @click="downloadInvoice('docx', item.invoice)">
                             <Download :size="15" aria-hidden="true" />
                             Word
                         </button>
-                        <button class="table-link-button" type="button" @click="downloadInvoice('pdf')">
+                        <button class="table-link-button" type="button" @click="downloadInvoice('pdf', item.invoice)">
                             <Download :size="15" aria-hidden="true" />
                             PDF
                         </button>
+                    </div>
+
+                    <div v-if="item.invoices.length > 0" class="payment-list">
+                        <article v-for="invoice in item.invoices" :key="invoice.id">
+                            <strong>{{ invoice.invoice_reference }} | {{ invoice.currency }} {{ invoice.total_amount }}</strong>
+                            <span>{{ statusLabel(invoice.status) }} | Qty {{ invoice.total_quantity }} {{ item.fulfilment.uom ?? item.uom }} | Balance {{ invoice.currency }} {{ invoice.balance_amount }}</span>
+                            <small>{{ invoice.delivery_order_reference ?? 'No delivery order linked' }}</small>
+                            <div class="document-downloads">
+                                <button class="table-link-button" type="button" @click="downloadInvoice('docx', invoice)">
+                                    <Download :size="15" aria-hidden="true" />
+                                    Word
+                                </button>
+                                <button class="table-link-button" type="button" @click="downloadInvoice('pdf', invoice)">
+                                    <Download :size="15" aria-hidden="true" />
+                                    PDF
+                                </button>
+                            </div>
+                        </article>
                     </div>
                 </article>
             </section>
@@ -1631,27 +2321,27 @@ onMounted(loadItem);
                     <header>
                         <div>
                             <p>Payment Tracking</p>
-                            <h2>{{ item.invoice ? statusLabel(item.invoice.payment_status) : 'Invoice Required' }}</h2>
+                            <h2>{{ selectedPaymentInvoice ? statusLabel(selectedPaymentInvoice.payment_status) : 'Invoice Required' }}</h2>
                         </div>
                         <ReceiptText :size="22" aria-hidden="true" />
                     </header>
 
-                    <p v-if="!item.invoice" class="logistics-gate">
+                    <p v-if="item.invoices.length === 0" class="logistics-gate">
                         Generate the invoice before payment can be tracked.
                     </p>
 
-                    <template v-if="item.invoice">
+                    <template v-if="selectedPaymentInvoice">
                         <div class="payment-summary-grid">
-                            <span>Invoice Status</span>
-                            <strong>{{ statusLabel(item.invoice.status) }}</strong>
-                            <span>Sent At</span>
-                            <strong>{{ formatDateTime(item.invoice.sent_at) }}</strong>
-                            <span>Total</span>
-                            <strong>{{ item.invoice.currency }} {{ item.invoice.total_amount }}</strong>
-                            <span>Paid</span>
-                            <strong>{{ item.invoice.currency }} {{ item.invoice.paid_amount }}</strong>
-                            <span>Balance</span>
-                            <strong>{{ item.invoice.currency }} {{ item.invoice.balance_amount }}</strong>
+                            <span>Item Total</span>
+                            <strong>{{ item.fulfilment.currency ?? selectedPaymentInvoice.currency }} {{ item.fulfilment.quotation_total_amount }}</strong>
+                            <span>Item Paid</span>
+                            <strong>{{ item.fulfilment.currency ?? selectedPaymentInvoice.currency }} {{ item.fulfilment.paid_amount }}</strong>
+                            <span>Pending From Quotation</span>
+                            <strong>{{ item.fulfilment.currency ?? selectedPaymentInvoice.currency }} {{ item.fulfilment.remaining_quotation_amount }}</strong>
+                            <span>Selected Invoice</span>
+                            <strong>{{ selectedPaymentInvoice.invoice_reference }}</strong>
+                            <span>Invoice Balance</span>
+                            <strong>{{ selectedPaymentInvoice.currency }} {{ selectedPaymentInvoice.balance_amount }}</strong>
                         </div>
 
                         <button class="secondary-action compact-action" type="button" :disabled="!canMarkInvoiceSent" @click="markInvoiceSent">
@@ -1661,6 +2351,14 @@ onMounted(loadItem);
                         </button>
 
                         <form class="follow-up-form payment-form-grid" @submit.prevent="savePayment">
+                            <label>
+                                <span>Invoice</span>
+                                <select v-model.number="paymentForm.invoice_id">
+                                    <option v-for="invoice in item.invoices" :key="invoice.id" :value="invoice.id">
+                                        {{ invoice.invoice_reference }} | {{ invoice.currency }} {{ invoice.balance_amount }}
+                                    </option>
+                                </select>
+                            </label>
                             <label>
                                 <span>Amount</span>
                                 <input v-model="paymentForm.amount" type="number" min="0.001" step="0.001" required />
@@ -1685,13 +2383,13 @@ onMounted(loadItem);
                         </form>
 
                         <div class="payment-list">
-                            <article v-for="payment in item.invoice.payments" :key="payment.id">
+                            <article v-for="payment in selectedPaymentInvoice.payments" :key="payment.id">
                                 <strong>{{ payment.currency }} {{ payment.amount }}</strong>
                                 <span>{{ payment.payment_reference ?? 'No reference' }}</span>
                                 <small>{{ payment.payment_date ?? '-' }} by {{ payment.recorded_by_name ?? 'User' }}</small>
                                 <p v-if="payment.remarks">{{ payment.remarks }}</p>
                             </article>
-                            <p v-if="item.invoice.payments.length === 0" class="empty-note">No payments recorded yet.</p>
+                            <p v-if="selectedPaymentInvoice.payments.length === 0" class="empty-note">No payments recorded yet.</p>
                         </div>
                     </template>
                 </article>
@@ -1711,7 +2409,7 @@ onMounted(loadItem);
                         <span>Closed At</span>
                         <strong>{{ formatDateTime(item.closed_at) }}</strong>
                         <span>Payment Status</span>
-                        <strong>{{ item.invoice ? statusLabel(item.invoice.payment_status) : '-' }}</strong>
+                        <strong>{{ itemInvoiceBalance <= 0.0005 && item.invoices.length > 0 ? 'Paid' : 'Pending' }}</strong>
                     </div>
 
                     <form class="follow-up-form" @submit.prevent="closeJob">

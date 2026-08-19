@@ -58,6 +58,7 @@ interface TraceItem {
     supplier_po_reference: string | null;
     supplier_company_name: string | null;
     manufacturer_name: string | null;
+    product_code: string | null;
     product_name: string | null;
     title: string | null;
     quantity: string;
@@ -470,7 +471,7 @@ onMounted(loadCurrentMode);
                         <header>
                             <div>
                                 <small>{{ item.manufacturer_name ?? '-' }}</small>
-                                <h2>{{ item.title ?? item.product_name ?? 'Product item' }}</h2>
+                                <h2>{{ item.product_code ? `${item.product_code} - ` : '' }}{{ item.title ?? item.product_name ?? 'Product item' }}</h2>
                             </div>
                             <span class="stage-pill teal">{{ item.status_label }}</span>
                         </header>

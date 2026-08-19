@@ -25,6 +25,7 @@ class QuotationRevisionDocumentTest extends TestCase
     public function test_salesperson_can_finalize_a_quotation_into_version_one_with_downloadable_word_and_pdf(): void
     {
         Storage::disk('local')->deleteDirectory('generated/quotations');
+        Storage::disk('local')->deleteDirectory('quotation-assets');
         $context = $this->quotationContext();
         $quotationId = $this->createCompleteQuotation($context);
 
@@ -36,7 +37,11 @@ class QuotationRevisionDocumentTest extends TestCase
             ->assertJsonPath('data.version_number', 1)
             ->assertJsonPath('data.created_by_name', 'Ahmed Mansoor')
             ->assertJsonPath('data.downloads.docx', "/api/quotations/{$quotationId}/versions/1/download/docx")
-            ->assertJsonPath('data.downloads.pdf', "/api/quotations/{$quotationId}/versions/1/download/pdf");
+            ->assertJsonPath('data.downloads.pdf', "/api/quotations/{$quotationId}/versions/1/download/pdf")
+            ->assertJsonPath('data.downloads.commercial.docx', "/api/quotations/{$quotationId}/versions/1/download/commercial/docx")
+            ->assertJsonPath('data.downloads.commercial.pdf', "/api/quotations/{$quotationId}/versions/1/download/commercial/pdf")
+            ->assertJsonPath('data.downloads.technical.docx', "/api/quotations/{$quotationId}/versions/1/download/technical/docx")
+            ->assertJsonPath('data.downloads.technical.pdf', "/api/quotations/{$quotationId}/versions/1/download/technical/pdf");
 
         $this->assertDatabaseHas('quotation_versions', [
             'quotation_id' => $quotationId,
@@ -60,20 +65,65 @@ class QuotationRevisionDocumentTest extends TestCase
         $zip = new ZipArchive;
         $this->assertTrue($zip->open($docxPath));
         $documentXml = $zip->getFromName('word/document.xml');
+        $commercialMediaFiles = $this->docxMediaFiles($zip);
         $this->assertDocxXmlPartsAreParseable($zip);
+        $this->assertDocxUsesRepeatingPageChrome($zip, (string) $response->json('data.quotation_reference'));
         $zip->close();
 
         $this->assertIsString($documentXml);
         $this->assertStringContainsString('Commercial Offer', $documentXml);
         $this->assertStringContainsString('ISC-COR-QT-', $documentXml);
+        $this->assertStringContainsString('RFQ 6000024422 PR 11729328', $documentXml);
+        $this->assertStringContainsString('ABB-FM-001', $documentXml);
+        $this->assertStringContainsString('Within 45 days from the date of Invoice.', $documentXml);
+        $this->assertGreaterThanOrEqual(4, count($commercialMediaFiles));
+        $this->assertMatchesRegularExpression(
+            '/<w:p(?: [^>]*)?>(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<\/w:p>/s',
+            $documentXml,
+            'The commercial stamp and ABB branding should share one compact paragraph.'
+        );
 
-        $this->withBearerToken($context['salesperson'])
+        $technicalDocxPath = Storage::disk('local')->path(str_replace('.docx', '-technical.docx', $response->json('data.docx_path')));
+        $technicalPdfPath = Storage::disk('local')->path(str_replace('.pdf', '-technical.pdf', $response->json('data.pdf_path')));
+
+        $this->assertFileExists($technicalDocxPath);
+        $this->assertFileExists($technicalPdfPath);
+
+        $technicalZip = new ZipArchive;
+        $this->assertTrue($technicalZip->open($technicalDocxPath));
+        $technicalXml = (string) $technicalZip->getFromName('word/document.xml');
+        $technicalMediaFiles = $this->docxMediaFiles($technicalZip);
+        $this->assertDocxXmlPartsAreParseable($technicalZip);
+        $this->assertDocxUsesRepeatingPageChrome($technicalZip, (string) $response->json('data.quotation_reference'));
+        $technicalZip->close();
+
+        $this->assertStringContainsString('Technical Offer', $technicalXml);
+        $this->assertStringContainsString('ABB-FM-001', $technicalXml);
+        $this->assertStringNotContainsString('ACCEPTED TERMS OF PAYMENT', $technicalXml);
+        $this->assertStringNotContainsString('ACCEPTED INVOICE CURRENCY', $technicalXml);
+        $this->assertStringNotContainsString('Unit Price', $technicalXml);
+        $this->assertStringNotContainsString('Total Net Amount', $technicalXml);
+        $this->assertGreaterThanOrEqual(3, count($technicalMediaFiles));
+
+        $downloadResponse = $this->withBearerToken($context['salesperson'])
             ->get("/api/quotations/{$quotationId}/versions/1/download/docx")
             ->assertOk()
             ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        $this->assertStringContainsString('.DOCX', (string) $downloadResponse->headers->get('content-disposition'));
+
+        $technicalDownloadResponse = $this->withBearerToken($context['salesperson'])
+            ->get("/api/quotations/{$quotationId}/versions/1/download/technical/docx")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        $this->assertStringContainsString('TECHNICAL', (string) $technicalDownloadResponse->headers->get('content-disposition'));
 
         $this->withBearerToken($context['salesperson'])
             ->get("/api/quotations/{$quotationId}/versions/1/download/pdf")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->withBearerToken($context['salesperson'])
+            ->get("/api/quotations/{$quotationId}/versions/1/download/technical/pdf")
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');
     }
@@ -94,6 +144,7 @@ class QuotationRevisionDocumentTest extends TestCase
                 'items' => [
                     [
                         'manufacturer_id' => $context['manufacturer']->id,
+                        'product_code' => 'ABB-FM-002',
                         'product_name' => 'Flameproof Motor',
                         'title' => 'ABB Flameproof Motor Updated',
                         'buyer_description' => '<p>Updated buyer-visible description.</p>',
@@ -128,6 +179,124 @@ class QuotationRevisionDocumentTest extends TestCase
             'action' => 'quotation.items_updated',
             'summary' => 'Ahmed Mansoor updated quotation products.',
         ]);
+    }
+
+    public function test_finalizing_after_non_product_edits_refreshes_latest_version_without_new_revision(): void
+    {
+        Storage::disk('local')->deleteDirectory('generated/quotations');
+        $context = $this->quotationContext();
+        $quotationId = $this->createCompleteQuotation($context);
+
+        $firstVersion = $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")
+            ->assertCreated()
+            ->assertJsonPath('data.version_number', 1)
+            ->json('data');
+
+        $this->withBearerToken($context['salesperson'])
+            ->putJson("/api/quotations/{$quotationId}", [
+                'buyer_company_id' => $context['buyerCompany']->id,
+                'buyer_contact_id' => $context['buyerContact']->id,
+                'rfq_number' => '6000024422',
+                'pr_number' => '11729328',
+                'rfq_title' => 'RFQ 6000024422 PR 11729328',
+                'closing_at' => null,
+                'quotation_validity_value' => 45,
+                'quotation_validity_unit' => 'days',
+                'payment_term_days' => 45,
+                'payment_terms_extra' => 'Revised bank charges note.',
+                'payment_customer_type' => 'credit',
+                'delivery_period_min' => 22,
+                'delivery_period_max' => 24,
+                'delivery_period_unit' => 'weeks',
+                'delivery_period_type' => 'working',
+                'accepted_invoice_currency' => 'OMR',
+                'incoterm_id' => $context['incoterm']->id,
+                'delivery_responsibility' => 'isc',
+            ])
+            ->assertOk();
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")
+            ->assertOk()
+            ->assertJsonPath('data.version_number', 1)
+            ->assertJsonPath('data.revision_action', 'refreshed');
+
+        $this->assertDatabaseCount('quotation_versions', 1);
+        $this->assertDatabaseHas('quotation_activity_logs', [
+            'quotation_id' => $quotationId,
+            'action' => 'quotation.version_refreshed',
+        ]);
+
+        $this->assertSame(
+            $firstVersion['docx_path'],
+            $this->withBearerToken($context['salesperson'])
+                ->getJson("/api/quotations/{$quotationId}")
+                ->assertOk()
+                ->json('data.versions.0.docx_path')
+        );
+    }
+
+    public function test_minor_description_spelling_correction_does_not_create_revision_but_meaningful_description_change_does(): void
+    {
+        Storage::disk('local')->deleteDirectory('generated/quotations');
+        $context = $this->quotationContext();
+        $quotationId = $this->createCompleteQuotation($context);
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")
+            ->assertCreated()
+            ->assertJsonPath('data.version_number', 1);
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/items", [
+                'items' => [
+                    [
+                        'manufacturer_id' => $context['manufacturer']->id,
+                        'product_code' => 'ABB-FM-001',
+                        'product_name' => 'Flameproof Motor',
+                        'title' => 'ABB Flameproof Motor',
+                        'buyer_description' => '<p>ABB Flameproof Motor, Ex db IIB T4 Gb, Zone 1.</p><ul><li>Terminal box location: RSH</li></ul>',
+                        'manufacturer_description' => '<p>ABB Flameproof Motor, Ex db IIB T4 Gb, Zone 1.</p><ul><li>Terminal box location: RHS</li><li>Include ABB routine test report.</li></ul>',
+                        'quantity' => 1,
+                        'uom' => 'EA',
+                        'unit_price' => '3256.000',
+                    ],
+                ],
+            ])->assertOk();
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")
+            ->assertOk()
+            ->assertJsonPath('data.version_number', 1)
+            ->assertJsonPath('data.revision_action', 'refreshed');
+
+        $this->assertDatabaseCount('quotation_versions', 1);
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/items", [
+                'items' => [
+                    [
+                        'manufacturer_id' => $context['manufacturer']->id,
+                        'product_code' => 'ABB-FM-001',
+                        'product_name' => 'Flameproof Motor',
+                        'title' => 'ABB Flameproof Motor',
+                        'buyer_description' => '<p>ABB Flameproof Motor with additional hazardous-area accessories and stainless steel terminal hardware.</p>',
+                        'manufacturer_description' => '<p>ABB Flameproof Motor, Ex db IIB T4 Gb, Zone 1.</p><ul><li>Terminal box location: RHS</li><li>Include ABB routine test report.</li></ul>',
+                        'quantity' => 1,
+                        'uom' => 'EA',
+                        'unit_price' => '3256.000',
+                    ],
+                ],
+            ])->assertOk();
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")
+            ->assertCreated()
+            ->assertJsonPath('data.version_number', 2)
+            ->assertJsonPath('data.revision_action', 'created');
+
+        $this->assertDatabaseCount('quotation_versions', 2);
     }
 
     public function test_downloading_a_malformed_existing_word_revision_repairs_it_from_the_saved_snapshot(): void
@@ -264,10 +433,12 @@ class QuotationRevisionDocumentTest extends TestCase
                 'buyer_contact_id' => $context['buyerContact']->id,
                 'rfq_number' => '6000024422',
                 'pr_number' => '11729328',
+                'rfq_title' => 'RFQ 6000024422 PR 11729328',
                 'closing_at' => '2026-06-02 14:30:00',
                 'quotation_validity_value' => 30,
                 'quotation_validity_unit' => 'days',
                 'payment_term_days' => 45,
+                'payment_terms_extra' => 'Any bank charges shall be borne by buyer.',
                 'delivery_period_min' => 22,
                 'delivery_period_max' => 24,
                 'delivery_period_unit' => 'weeks',
@@ -284,6 +455,7 @@ class QuotationRevisionDocumentTest extends TestCase
                 'items' => [
                     [
                         'manufacturer_id' => $context['manufacturer']->id,
+                        'product_code' => 'ABB-FM-001',
                         'product_name' => 'Flameproof Motor',
                         'title' => 'ABB Flameproof Motor',
                         'buyer_description' => '<p>ABB Flameproof Motor, Ex db IIB T4 Gb, Zone 1.</p><ul><li>Terminal box location: RHS</li></ul>',
@@ -343,5 +515,61 @@ class QuotationRevisionDocumentTest extends TestCase
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
         }
+    }
+
+    private function assertDocxUsesRepeatingPageChrome(ZipArchive $zip, string $reference): void
+    {
+        $documentXml = $zip->getFromName('word/document.xml');
+        $relationshipsXml = $zip->getFromName('word/_rels/document.xml.rels');
+
+        $this->assertIsString($documentXml);
+        $this->assertIsString($relationshipsXml);
+        $this->assertStringContainsString('<w:headerReference', $documentXml);
+        $this->assertStringContainsString('<w:footerReference', $documentXml);
+
+        preg_match(
+            '/<Relationship\b(?=[^>]*Type="[^"]*\/header")(?=[^>]*Target="([^"]+)")[^>]*\/>/',
+            $relationshipsXml,
+            $headerRelationship,
+        );
+        preg_match(
+            '/<Relationship\b(?=[^>]*Type="[^"]*\/footer")(?=[^>]*Target="([^"]+)")[^>]*\/>/',
+            $relationshipsXml,
+            $footerRelationship,
+        );
+
+        $this->assertNotEmpty($headerRelationship[1] ?? null, 'DOCX must relate its document to a header XML part.');
+        $this->assertNotEmpty($footerRelationship[1] ?? null, 'DOCX must relate its document to a footer XML part.');
+
+        $headerXml = $zip->getFromName('word/'.$headerRelationship[1]);
+        $footerXml = $zip->getFromName('word/'.$footerRelationship[1]);
+
+        $this->assertIsString($headerXml);
+        $this->assertIsString($footerXml);
+        $this->assertStringContainsString('Ref: '.$reference, $headerXml);
+        $this->assertStringContainsString('<v:imagedata', $headerXml);
+        $this->assertStringContainsString('<v:imagedata', $footerXml);
+        $this->assertStringContainsString('Page ', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>PAGE<\/w:instrText>/', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>NUMPAGES<\/w:instrText>/', $footerXml);
+        $this->assertStringNotContainsString('riyada', strtolower($documentXml.$relationshipsXml.$headerXml.$footerXml));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function docxMediaFiles(ZipArchive $zip): array
+    {
+        $files = [];
+
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $name = (string) $zip->getNameIndex($index);
+
+            if (str_starts_with($name, 'word/media/')) {
+                $files[] = $name;
+            }
+        }
+
+        return $files;
     }
 }

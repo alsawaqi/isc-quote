@@ -3,20 +3,13 @@
 <head>
     <meta charset="utf-8">
     <style>
-        @page {
-            margin: 22px 30px 24px;
-        }
+        @include('documents.partials.page-chrome-css')
 
         body {
             color: #111827;
             font-family: DejaVu Sans, Arial, sans-serif;
             font-size: 10px;
             line-height: 1.35;
-        }
-
-        .brand-image,
-        .footer-image {
-            width: 100%;
         }
 
         .title {
@@ -77,13 +70,14 @@
         }
 
         .items-table td:nth-child(1),
-        .items-table td:nth-child(3) {
+        .items-table td:nth-child(2),
+        .items-table td:nth-child(4) {
             text-align: center;
         }
 
-        .items-table td:nth-child(4),
         .items-table td:nth-child(5),
-        .items-table td:nth-child(6) {
+        .items-table td:nth-child(6),
+        .items-table td:nth-child(7) {
             text-align: right;
         }
 
@@ -112,6 +106,13 @@
             display: inline-block;
         }
 
+        .highlight,
+        mark,
+        span[style*="background-color"] {
+            background: #fff59d;
+            padding: 0 1px;
+        }
+
         .abb {
             margin-top: 12px;
             width: 160px;
@@ -122,15 +123,22 @@
             margin: 12px 0 8px;
             text-align: center;
         }
+
     </style>
 </head>
 <body>
-    @if($assets['header'])
-        <img class="brand-image" src="{{ $assets['header'] }}" alt="Industrial Supplies Center">
-    @endif
-
     <div class="title">Commercial Offer</div>
-    <div class="subtitle">- RFQ {{ $snapshot['quotation']['rfq_number'] }}</div>
+    @php
+        $rfqTitle = $snapshot['quotation']['rfq_title'] ?? trim(implode(' ', array_filter([
+            ! empty($snapshot['quotation']['rfq_number']) ? 'RFQ '.$snapshot['quotation']['rfq_number'] : null,
+            ! empty($snapshot['quotation']['pr_number']) ? 'PR '.$snapshot['quotation']['pr_number'] : null,
+        ])));
+        $currencyDisplay = $snapshot['quotation']['currency_display'] ?? $snapshot['quotation']['currency'];
+    @endphp
+
+    @if($rfqTitle)
+        <div class="subtitle">- {{ $rfqTitle }}</div>
+    @endif
 
     <table class="ref-table">
         <tr>
@@ -175,51 +183,110 @@
         </tr>
         <tr>
             <td><span class="section-label">DATE OF DELIVERY</span>{{ $snapshot['quotation']['delivery_period'] }}</td>
-            <td><span class="section-label">ACCEPTED INVOICE CURRENCY</span>{{ $snapshot['quotation']['currency'] }}</td>
+            <td><span class="section-label">ACCEPTED INVOICE CURRENCY</span>{{ $currencyDisplay }}</td>
         </tr>
     </table>
 
-    <div class="rfq-line">
-        RFQ {{ $snapshot['quotation']['rfq_number'] }}
-        PR {{ $snapshot['quotation']['pr_number'] }}
-        Closing Date: {{ $snapshot['quotation']['closing_at'] }}
-    </div>
+    @if(! empty($snapshot['payment_schedule']))
+        <div class="terms-title">Payment Schedule:</div>
+        @foreach($snapshot['payment_schedule'] as $schedule)
+            <div class="term">
+                <strong>{{ $schedule['line_number'] }}. {{ $schedule['label'] }}:</strong>
+                {{ $schedule['payment_percentage'] }}% by {{ $schedule['payment_method'] }}, {{ $schedule['due'] }}
+                @if($schedule['notes'])
+                    - {{ $schedule['notes'] }}
+                @endif
+            </div>
+        @endforeach
+    @endif
+
+    @if($rfqTitle || $snapshot['quotation']['closing_at'])
+        <div class="rfq-line">
+            @if($rfqTitle)
+                {{ $rfqTitle }}<br>
+            @endif
+            @if($snapshot['quotation']['closing_at'])
+                Closing Date: {{ $snapshot['quotation']['closing_at'] }}
+            @endif
+        </div>
+    @endif
 
     <table class="items-table">
         <thead>
             <tr>
                 <th style="width: 7%;">SL No</th>
-                <th style="width: 47%;">Description</th>
+                <th style="width: 10%;">Material / Item Code</th>
+                <th style="width: 40%;">Description</th>
                 <th style="width: 10%;">QTY</th>
-                <th style="width: 13%;">Unit Price</th>
+                <th style="width: 12%;">Unit Price</th>
                 <th style="width: 9%;">VAT %</th>
-                <th style="width: 14%;">Total excl. VAT</th>
+                <th style="width: 12%;">Total excl. VAT</th>
             </tr>
         </thead>
         <tbody>
             @foreach($snapshot['items'] as $item)
+                @php
+                    $descriptionChunks = $item['pdf_description_chunks'] ?? [(string) $item['description']];
+                    $isSplitDescription = count($descriptionChunks) > 1;
+                @endphp
+                @foreach($descriptionChunks as $chunkIndex => $descriptionChunk)
+                    <tr @class(['item-continuation' => $chunkIndex > 0])>
+                        <td>{{ $chunkIndex === 0 ? $item['line_number'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? ($item['product_code'] ?? '-') : '' }}</td>
+                        <td>
+                            @if($chunkIndex === 0)
+                                <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
+                                @if(($item['delivery_date'] ?? null) || ($item['incoterm'] ?? null))
+                                    <div style="font-size: 8px; color: #4b5563; margin-bottom: 3px;">
+                                        @if($item['delivery_date'] ?? null)
+                                            Delivery Date: {{ $item['delivery_date'] }}
+                                        @endif
+                                        @if(($item['delivery_date'] ?? null) && ($item['incoterm'] ?? null))
+                                            |
+                                        @endif
+                                        @if($item['incoterm'] ?? null)
+                                            Incoterm: {{ $item['incoterm'] }}
+                                        @endif
+                                    </div>
+                                @endif
+                            @endif
+                            @if($isSplitDescription)
+                                {!! nl2br(e($descriptionChunk)) !!}
+                            @elseif($chunkIndex === 0)
+                                {!! ($item['description_html'] ?? '') ?: nl2br(e($item['description'])) !!}
+                            @endif
+                        </td>
+                        <td>{{ $chunkIndex === 0 ? $item['quantity'].' '.$item['uom'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? $item['unit_price'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? ($item['vat_rate'] ?? '0.000') : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? $item['total_price'] : '' }}</td>
+                    </tr>
+                @endforeach
+            @endforeach
+            <tr>
+                <td colspan="6" class="total-label">Total Net Amount {{ $currencyDisplay }} (Excluding VAT):</td>
+                <td>{{ $snapshot['totals']['subtotal'] }}</td>
+            </tr>
+            @foreach(($snapshot['charges'] ?? []) as $charge)
                 <tr>
-                    <td>{{ $item['line_number'] }}</td>
-                    <td>
-                        <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
-                        {!! nl2br(e($item['description'])) !!}
+                    <td colspan="6" class="total-label">{{ $charge['label'] }}:</td>
+                    <td>{{ $charge['amount'] }}</td>
+                </tr>
+            @endforeach
+            @foreach(($snapshot['discounts'] ?? []) as $discount)
+                <tr>
+                    <td colspan="6" class="total-label">
+                        {{ $discount['label'] }}@if($discount['discount_type'] === 'percentage') ({{ $discount['amount'] }}%)@endif:
                     </td>
-                    <td>{{ $item['quantity'] }} {{ $item['uom'] }}</td>
-                    <td>{{ $item['unit_price'] }}</td>
-                    <td>{{ $item['vat_rate'] ?? '0.000' }}</td>
-                    <td>{{ $item['total_price'] }}</td>
+                    <td>-{{ $discount['computed_amount'] }}</td>
                 </tr>
             @endforeach
             <tr>
-                <td colspan="5" class="total-label">Total Net Amount {{ $snapshot['quotation']['currency'] }} (Excluding VAT):</td>
-                <td>{{ $snapshot['totals']['subtotal'] }}</td>
-            </tr>
-            <tr>
-                <td colspan="5" class="total-label">VAT Amount {{ $snapshot['quotation']['currency'] }}:</td>
+                <td colspan="6" class="total-label">VAT Amount {{ $currencyDisplay }} After Discount ({{ ucfirst($snapshot['quotation']['vat_pricing'] ?? 'exclusive') }}):</td>
                 <td>{{ $snapshot['totals']['vat'] ?? '0.000' }}</td>
             </tr>
             <tr>
-                <td colspan="5" class="total-label">Total Amount {{ $snapshot['quotation']['currency'] }} (Including VAT):</td>
+                <td colspan="6" class="total-label">Total Amount {{ $currencyDisplay }} (Including VAT):</td>
                 <td>{{ $snapshot['totals']['grand_total'] ?? $snapshot['totals']['subtotal'] }}</td>
             </tr>
         </tbody>
@@ -228,19 +295,19 @@
     <div class="terms-title">Terms & Conditions:</div>
     @foreach($snapshot['terms'] as $term)
         <div class="term">
-            <strong>{{ $term['title'] }}:</strong>
-            {{ $term['description'] }}
+            <strong>{{ $term['line_number'] ?? $loop->iteration }}. {{ $term['title'] }}:</strong>
+            {!! ($term['description_html'] ?? '') ?: e($term['description_plain'] ?? $term['description']) !!}
         </div>
     @endforeach
+
+    @if($assets['stamp'] ?? null)
+        <img class="abb" src="{{ $assets['stamp'] }}" alt="Industrial Supplies Center stamp">
+    @endif
 
     @if($assets['abb'])
         <img class="abb" src="{{ $assets['abb'] }}" alt="ABB value provider">
     @endif
 
     <div class="signoff">Industrial Supplies Center LLC.</div>
-
-    @if($assets['footer'])
-        <img class="footer-image" src="{{ $assets['footer'] }}" alt="ISC contact details">
-    @endif
 </body>
 </html>

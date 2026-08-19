@@ -204,6 +204,11 @@ class FoundationSeeder extends Seeder
             ['code' => 'LOT', 'name' => 'Lot'],
             ['code' => 'MTR', 'name' => 'Meter'],
             ['code' => 'KG', 'name' => 'Kilogram'],
+            ['code' => 'BOX', 'name' => 'Box'],
+            ['code' => 'NOS', 'name' => 'Numbers'],
+            ['code' => 'PAIR', 'name' => 'Pair'],
+            ['code' => 'ROLL', 'name' => 'Roll'],
+            ['code' => 'LTR', 'name' => 'Liter'],
         ] as $uom) {
             DB::table('uoms')->updateOrInsert(
                 ['code' => $uom['code']],
@@ -217,10 +222,10 @@ class FoundationSeeder extends Seeder
         }
 
         foreach ([
-            ['code' => 'OMR', 'name' => 'Omani Rial', 'exchange_rate' => '1.000000'],
-            ['code' => 'USD', 'name' => 'US Dollar', 'exchange_rate' => '2.600000'],
-            ['code' => 'EUR', 'name' => 'Euro', 'exchange_rate' => '2.820000'],
-            ['code' => 'GBP', 'name' => 'British Pound', 'exchange_rate' => '3.300000'],
+            ['code' => 'OMR', 'name' => 'Omani Rial', 'symbol' => 'ر.ع.', 'exchange_rate' => '1.000000'],
+            ['code' => 'USD', 'name' => 'US Dollar', 'symbol' => '$', 'exchange_rate' => '2.600000'],
+            ['code' => 'EUR', 'name' => 'Euro', 'symbol' => '€', 'exchange_rate' => '2.820000'],
+            ['code' => 'GBP', 'name' => 'British Pound', 'symbol' => '£', 'exchange_rate' => '3.300000'],
         ] as $currency) {
             DB::table('currencies')->updateOrInsert(
                 ['code' => $currency['code']],

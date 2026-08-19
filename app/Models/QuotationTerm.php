@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\SanitizedRichText;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -24,6 +25,7 @@ class QuotationTerm extends Model
         return [
             'line_number' => 'integer',
             'is_required_default' => 'boolean',
+            'description' => SanitizedRichText::class,
         ];
     }
 

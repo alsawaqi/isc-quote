@@ -3,7 +3,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
     AlertTriangle,
+    ArrowDown,
     ArrowLeft,
+    ArrowUp,
     CheckCircle2,
     Download,
     FileText,
@@ -16,6 +18,7 @@ import {
     UserRound,
 } from 'lucide-vue-next';
 import { downloadProtectedFile, requestJson } from '../auth';
+import RichTextEditor from './RichTextEditor.vue';
 
 interface SupplierOption {
     id: number;
@@ -26,6 +29,22 @@ interface SupplierOption {
     primary_contact_name: string | null;
     manufacturer_id: number | null;
     manufacturer_name: string | null;
+    manufacturer_ids: number[];
+    manufacturers: Array<{ id: number; name: string }>;
+    requires_factory: boolean;
+    locations: FactoryOption[];
+}
+
+interface FactoryOption {
+    id: number;
+    company_id: number;
+    name: string;
+    location: string;
+    address?: string | null;
+    country_name?: string | null;
+    manufacturer_id?: number | null;
+    manufacturer_name?: string | null;
+    status?: 'active' | 'inactive';
 }
 
 interface ContactOption {
@@ -35,12 +54,22 @@ interface ContactOption {
     email?: string | null;
     mobile?: string | null;
     telephone?: string | null;
+    all_locations: boolean;
+    is_primary_supplier: boolean;
+    location_ids: number[];
+    status?: 'active' | 'inactive';
 }
 
 interface SelectOption {
     id: string | number;
     code?: string;
     name: string;
+}
+
+interface CountryOption {
+    id: number;
+    name: string;
+    country_code?: string | null;
 }
 
 interface BuyerDefault {
@@ -69,10 +98,17 @@ interface PendingItem {
     quotation_closing_at: string | null;
     buyer_company_name: string;
     buyer_po_id: number;
+    buyer_po_item_id: number | null;
     buyer_po_number: string;
     buyer_po_date: string | null;
+    buyer_item_code: string | null;
+    buyer_po_item_amount: string | null;
+    delivery_date: string | null;
+    incoterm_id: number | null;
+    incoterm_code: string | null;
     manufacturer_id: number | null;
     manufacturer_name: string | null;
+    product_code: string | null;
     product_name: string;
     title: string;
     description: string | null;
@@ -92,6 +128,7 @@ interface SupplierPoOptions {
     suppliers: SupplierOption[];
     supplier_contacts: ContactOption[];
     incoterms: SelectOption[];
+    countries: CountryOption[];
     currencies: SelectOption[];
     period_units: SelectOption[];
     delivery_types: SelectOption[];
@@ -102,7 +139,20 @@ interface SupplierPoOptions {
 
 interface SelectedLine {
     quotation_item_id: number;
-    unit_cost: number;
+    unit_cost: number | null;
+    item_description: string;
+    company_location_id: string;
+    delivery_date: string;
+    incoterm_id: string;
+    coo_entries: CooEntryForm[];
+}
+
+interface CooEntryForm {
+    country_id: string;
+    country_name: string;
+    amount: number | null;
+    location: string;
+    localKey: number;
 }
 
 interface SupplierPoTermForm {
@@ -115,8 +165,14 @@ interface SupplierPoTermForm {
 interface SupplierPoRecord {
     id: number;
     po_reference: string;
+    revision_number: number;
     supplier_id: number;
+    supplier_company_id: number;
     supplier_contact_id: number;
+    company_location_id: number | null;
+    factory?: FactoryOption | null;
+    factory_name?: string | null;
+    factory_location?: string | null;
     incoterm_id: number | null;
     supplier_company_name: string;
     supplier_contact_name: string;
@@ -134,6 +190,7 @@ interface SupplierPoRecord {
     pdf_path: string;
     lines: SupplierPoLineRecord[];
     terms: SupplierPoTermRecord[];
+    revisions: SupplierPoRevisionRecord[];
     downloads: {
         docx: string;
         pdf: string;
@@ -146,22 +203,58 @@ interface SupplierPoLineRecord {
     quotation_reference: string;
     buyer_company_name: string | null;
     buyer_po_id: number;
+    buyer_po_item_id: number | null;
     buyer_po_number: string;
+    buyer_item_code: string | null;
     manufacturer_id: number | null;
     manufacturer_name: string | null;
+    company_location_id: number | null;
+    factory?: FactoryOption | null;
+    factory_name?: string | null;
+    factory_location?: string | null;
+    factory_country_name?: string | null;
+    factory_manufacturer_name?: string | null;
+    product_code: string | null;
     product_name: string;
     title: string;
     description: string | null;
     quantity: string;
     uom: string;
+    delivery_date: string | null;
+    incoterm_id: number | null;
+    incoterm_code: string | null;
     unit_cost: string;
     total_cost: string;
+    coo_entries: CooEntryRecord[];
+}
+
+interface CooEntryRecord {
+    id: number;
+    country_id: number | null;
+    country_name: string | null;
+    country_code: string | null;
+    amount: string | null;
+    location: string | null;
+    line_number: number;
 }
 
 interface SupplierPoTermRecord {
+    line_number: number;
     key: string | null;
     title: string;
     description: string;
+}
+
+interface SupplierPoRevisionRecord {
+    id: number;
+    revision_number: number;
+    po_reference: string;
+    finalized_at: string | null;
+    created_by_name: string | null;
+    downloads: {
+        docx: string;
+        pdf: string;
+    };
 }
 
 type Toast = { type: 'error' | 'success'; message: string };
@@ -181,6 +274,7 @@ const options = ref<SupplierPoOptions>({
     suppliers: [],
     supplier_contacts: [],
     incoterms: [],
+    countries: [],
     currencies: [],
     period_units: [],
     delivery_types: [],
@@ -202,11 +296,13 @@ const isLoadingItems = ref(false);
 const isCreating = ref(false);
 const isHydrating = ref(false);
 const toast = ref<Toast | null>(null);
+const lastAutomaticDeliveryTerm = ref('');
 let itemSearchTimer: number | undefined;
 
 const form = reactive({
     supplier_id: '',
     supplier_contact_id: '',
+    company_location_id: '',
     supplier_quote_reference: '',
     payment_term_days: 30,
     delivery_period_min: 22,
@@ -231,8 +327,17 @@ const itemFilters = reactive({
 const editId = computed(() => (route.params.id ? Number(route.params.id) : null));
 const isEditing = computed(() => Boolean(editId.value));
 const selectedSupplier = computed(() => options.value.suppliers.find((supplier) => String(supplier.id) === String(form.supplier_id)) ?? null);
+const supplierFactories = computed(() => selectedSupplier.value?.locations ?? []);
+const selectedFactory = computed(() => supplierFactories.value.find((factory) => String(factory.id) === String(form.company_location_id)) ?? null);
+const selectedIncoterm = computed(() => options.value.incoterms.find((incoterm) => String(incoterm.id) === String(form.incoterm_id)) ?? null);
 const filteredSupplierContacts = computed(() => {
-    return options.value.supplier_contacts.filter((contact) => String(contact.company_id) === String(selectedSupplier.value?.company_id ?? ''));
+    return options.value.supplier_contacts.filter((contact) => {
+        if (String(contact.company_id) !== String(selectedSupplier.value?.company_id ?? '')) return false;
+        if (createdSupplierPo.value?.supplier_contact_id === contact.id) return true;
+        if (!form.company_location_id) return true;
+
+        return contact.all_locations || contact.location_ids.includes(Number(form.company_location_id));
+    });
 });
 const itemCandidates = computed(() => {
     return options.value.pending_items;
@@ -246,13 +351,27 @@ const selectedItems = computed(() => {
         .filter((entry): entry is { line: SelectedLine; item: PendingItem } => Boolean(entry.item));
 });
 const subtotal = computed(() => {
-    return selectedItems.value.reduce((total, entry) => total + Number(entry.item.quantity) * Number(entry.line.unit_cost), 0);
+    return selectedItems.value.reduce((total, entry) => total + Number(entry.item.quantity) * Number(entry.line.unit_cost ?? 0), 0);
 });
 const grandTotal = computed(() => subtotal.value + Number(form.additional_charges || 0));
 const canSaveHeader = computed(() => {
-    return Boolean(options.value.buyer) && Boolean(form.supplier_id) && Boolean(form.supplier_contact_id) && Boolean(form.accepted_invoice_currency);
+    const factorySelected = !selectedSupplier.value?.requires_factory || Boolean(form.company_location_id);
+
+    return Boolean(options.value.buyer)
+        && Boolean(selectedSupplier.value)
+        && factorySelected
+        && Boolean(form.supplier_contact_id)
+        && Boolean(form.accepted_invoice_currency);
 });
-const canSaveItems = computed(() => selectedLines.value.length > 0 && selectedLines.value.every((line) => line.unit_cost >= 0));
+const canSaveItems = computed(() => selectedLines.value.length > 0 && selectedLines.value.every(
+    (line) => line.unit_cost !== null
+        && Number.isFinite(line.unit_cost)
+        && line.unit_cost >= 0
+        && (!lineFactoryRequired() || Boolean(line.company_location_id))
+        && Boolean(line.delivery_date)
+        && Boolean(line.incoterm_id)
+        && hasRichTextContent(line.item_description),
+));
 const canSaveTerms = computed(() => terms.value.length > 0 && terms.value.every((term) => term.title.trim() && term.description.trim()));
 const canCreate = computed(() => canSaveHeader.value && canSaveItems.value && canSaveTerms.value && !isCreating.value);
 const pageTitle = computed(() => (isEditing.value ? 'Edit Supplier PO' : 'Create Supplier PO'));
@@ -276,8 +395,152 @@ function money(value: number): string {
     });
 }
 
-function optionName(optionsList: SelectOption[], id: string): string {
-    return optionsList.find((option) => String(option.id) === String(id))?.name ?? id;
+function hasRichTextContent(value: string): boolean {
+    const text = value
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .trim();
+
+    return text.length > 0;
+}
+
+function optionName(optionsList: SelectOption[], id: string | number): string {
+    return optionsList.find((option) => String(option.id) === String(id))?.name ?? String(id);
+}
+
+function incotermOptionLabel(id: string | number | null): string {
+    if (!id) {
+        return '-';
+    }
+
+    const incoterm = options.value.incoterms.find((option) => String(option.id) === String(id));
+
+    if (!incoterm) {
+        return String(id);
+    }
+
+    const code = incoterm.code?.trim() ?? '';
+    const name = incoterm.name.trim();
+
+    return code && code.toLowerCase() !== name.toLowerCase() ? `${code} - ${name}` : (code || name);
+}
+
+function factoryOptionLabel(factory: FactoryOption): string {
+    const parts = [factory.name, factory.location].filter(Boolean);
+    const manufacturer = factory.manufacturer_name ? ` (${factory.manufacturer_name})` : '';
+    const status = factory.status === 'inactive' ? ' (inactive - retained)' : '';
+
+    return `${parts.join(' - ')}${manufacturer}${status}`;
+}
+
+function lineFactoryRequired(): boolean {
+    return Boolean(selectedSupplier.value?.requires_factory || supplierFactories.value.length > 0);
+}
+
+function factoryMatchesItem(factory: FactoryOption, item: PendingItem): boolean {
+    return !factory.manufacturer_id
+        || !item.manufacturer_id
+        || Number(factory.manufacturer_id) === Number(item.manufacturer_id);
+}
+
+function lineFactoryOptions(item: PendingItem, line?: SelectedLine): FactoryOption[] {
+    const matching = supplierFactories.value.filter((factory) => factoryMatchesItem(factory, item));
+
+    if (line?.company_location_id && !matching.some((factory) => String(factory.id) === String(line.company_location_id))) {
+        const retainedFactory = supplierFactories.value.find((factory) => String(factory.id) === String(line.company_location_id));
+
+        if (retainedFactory) {
+            return [...matching, retainedFactory];
+        }
+    }
+
+    return matching;
+}
+
+function defaultLineFactoryId(item: PendingItem): string {
+    if (selectedFactory.value && factoryMatchesItem(selectedFactory.value, item)) {
+        return String(selectedFactory.value.id);
+    }
+
+    const matchingFactories = supplierFactories.value.filter((factory) => factory.status !== 'inactive' && factoryMatchesItem(factory, item));
+
+    return matchingFactories.length === 1 ? String(matchingFactories[0].id) : '';
+}
+
+function lineFactoryLabel(line: SelectedLine, item?: PendingItem): string {
+    const factory = supplierFactories.value.find((option) => String(option.id) === String(line.company_location_id))
+        ?? (item ? lineFactoryOptions(item, line).find((option) => String(option.id) === String(line.company_location_id)) : null);
+
+    return factory ? factoryOptionLabel(factory) : '-';
+}
+
+function defaultLineIncotermId(item: PendingItem): string {
+    return item.incoterm_id ? String(item.incoterm_id) : (form.incoterm_id ? String(form.incoterm_id) : '');
+}
+
+function newCooEntry(): CooEntryForm {
+    return {
+        country_id: '',
+        country_name: '',
+        amount: null,
+        location: '',
+        localKey: Date.now() + Math.random(),
+    };
+}
+
+function cooEntriesFromRecord(entries: CooEntryRecord[] = []): CooEntryForm[] {
+    const mapped = entries.map((entry, index) => ({
+        country_id: entry.country_id ? String(entry.country_id) : '',
+        country_name: entry.country_name ?? '',
+        amount: entry.amount !== null ? Number(entry.amount) : null,
+        location: entry.location ?? '',
+        localKey: Date.now() + index + Math.random(),
+    }));
+
+    return mapped.length > 0 ? mapped : [newCooEntry()];
+}
+
+function hasCooEntryContent(entry: CooEntryForm): boolean {
+    return Boolean(
+        entry.country_id
+            || entry.country_name.trim()
+            || String(entry.amount ?? '').trim()
+            || entry.location.trim(),
+    );
+}
+
+function visibleCooEntries(line: SelectedLine): CooEntryForm[] {
+    return line.coo_entries.filter((entry) => hasCooEntryContent(entry));
+}
+
+function cooEntrySummary(entry: CooEntryForm): string {
+    const selectedCountry = entry.country_id
+        ? options.value.countries.find((country) => String(country.id) === String(entry.country_id))?.name
+        : null;
+    const parts = [
+        selectedCountry ?? entry.country_name.trim(),
+        String(entry.amount ?? '').trim() ? `Amount: ${entry.amount}` : '',
+        entry.location.trim() ? `Location: ${entry.location.trim()}` : '',
+    ].filter(Boolean);
+
+    return parts.join(' | ');
+}
+
+function cooPayloadEntries(line: SelectedLine): Array<{ country_id: number | null; country_name: string | null; amount: number | null; location: string | null }> {
+    return visibleCooEntries(line).map((entry) => ({
+        country_id: entry.country_id ? Number(entry.country_id) : null,
+        country_name: entry.country_name.trim() || null,
+        amount: String(entry.amount ?? '').trim() ? Number(entry.amount) : null,
+        location: entry.location.trim() || null,
+    }));
+}
+
+function addCooEntry(line: SelectedLine): void {
+    line.coo_entries.push(newCooEntry());
+}
+
+function removeCooEntry(line: SelectedLine, localKey: number): void {
+    line.coo_entries = line.coo_entries.filter((entry) => entry.localKey !== localKey);
 }
 
 function selectedLineFor(itemId: number): SelectedLine | null {
@@ -313,7 +576,12 @@ function toggleItem(item: PendingItem): void {
 
     selectedLines.value.push({
         quotation_item_id: item.quotation_item_id,
-        unit_cost: Number(item.quotation_unit_price),
+        unit_cost: null,
+        item_description: item.description ?? '',
+        company_location_id: defaultLineFactoryId(item),
+        delivery_date: item.delivery_date ?? '',
+        incoterm_id: defaultLineIncotermId(item),
+        coo_entries: [newCooEntry()],
     });
     cacheSelectedItem(item);
 }
@@ -322,7 +590,8 @@ function updateLineCost(itemId: number, value: string): void {
     const line = selectedLineFor(itemId);
 
     if (line) {
-        line.unit_cost = Number(value);
+        const parsedValue = Number(value);
+        line.unit_cost = value.trim() && Number.isFinite(parsedValue) ? parsedValue : null;
     }
 }
 
@@ -337,6 +606,7 @@ function initializeTerms(defaults: TermDefault[]): void {
         description: defaultDescription(term.key),
         localKey: Date.now() + index,
     }));
+    lastAutomaticDeliveryTerm.value = automaticDeliveryTermDescription();
 }
 
 function addTerm(): void {
@@ -348,16 +618,57 @@ function addTerm(): void {
     });
 }
 
+function moveTerm(index: number, direction: -1 | 1): void {
+    const nextIndex = index + direction;
+
+    if (nextIndex < 0 || nextIndex >= terms.value.length) {
+        return;
+    }
+
+    const reordered = [...terms.value];
+    const [term] = reordered.splice(index, 1);
+    reordered.splice(nextIndex, 0, term);
+    terms.value = reordered;
+}
+
 function defaultDescription(key: string): string {
     const defaults: Record<string, string> = {
         acknowledgment: 'Suppliers shall acknowledge receipt of this PO by email within TWO days.',
-        delivery_terms: 'CPT - Sohar',
+        delivery_terms: automaticDeliveryTermDescription(),
         documents: 'Shipping Documents: Invoice, Packing list, COO, Bill of Lading',
         warranty: 'Warranty shall be 12 months from commissioning or 18 months from supply.',
         bank_details: 'Payment will be transferred to supplier bank details.',
     };
 
     return defaults[key] ?? '';
+}
+
+function automaticDeliveryTermDescription(): string {
+    const incoterm = selectedIncoterm.value;
+
+    if (!incoterm) {
+        return 'Incoterm to be confirmed before supplier PO acceptance.';
+    }
+
+    const code = incoterm.code?.trim() ?? '';
+    const name = incoterm.name.trim();
+
+    if (code && name && code.toLowerCase() !== name.toLowerCase()) {
+        return `${code} - ${name}`;
+    }
+
+    return code || name;
+}
+
+function refreshAutomaticDeliveryTerm(): void {
+    const deliveryTerm = terms.value.find((term) => term.key === 'delivery_terms');
+    const nextAutomaticDescription = automaticDeliveryTermDescription();
+
+    if (deliveryTerm && (!deliveryTerm.description.trim() || deliveryTerm.description.trim() === lastAutomaticDeliveryTerm.value.trim())) {
+        deliveryTerm.description = nextAutomaticDescription;
+    }
+
+    lastAutomaticDeliveryTerm.value = nextAutomaticDescription;
 }
 
 function supplierPoLineToPendingItem(line: SupplierPoLineRecord): PendingItem {
@@ -369,10 +680,17 @@ function supplierPoLineToPendingItem(line: SupplierPoLineRecord): PendingItem {
         quotation_closing_at: null,
         buyer_company_name: line.buyer_company_name ?? '-',
         buyer_po_id: line.buyer_po_id,
+        buyer_po_item_id: line.buyer_po_item_id,
         buyer_po_number: line.buyer_po_number,
         buyer_po_date: null,
+        buyer_item_code: line.buyer_item_code,
+        buyer_po_item_amount: null,
+        delivery_date: line.delivery_date,
+        incoterm_id: line.incoterm_id,
+        incoterm_code: line.incoterm_code,
         manufacturer_id: line.manufacturer_id,
         manufacturer_name: line.manufacturer_name,
+        product_code: line.product_code,
         product_name: line.product_name,
         title: line.title,
         description: line.description,
@@ -408,6 +726,7 @@ function applySupplierPo(supplierPo: SupplierPoRecord): void {
     }, {});
     form.supplier_id = String(supplierPo.supplier_id);
     form.supplier_contact_id = '';
+    form.company_location_id = supplierPo.company_location_id ? String(supplierPo.company_location_id) : '';
     form.supplier_quote_reference = supplierPo.supplier_quote_reference ?? '';
     form.payment_term_days = Number(supplierPo.payment_term_days);
     form.delivery_period_min = Number(supplierPo.delivery_period_min);
@@ -421,6 +740,11 @@ function applySupplierPo(supplierPo: SupplierPoRecord): void {
     selectedLines.value = supplierPo.lines.map((line) => ({
         quotation_item_id: line.quotation_item_id,
         unit_cost: Number(line.unit_cost),
+        item_description: line.description ?? '',
+        company_location_id: line.company_location_id ? String(line.company_location_id) : (supplierPo.company_location_id ? String(supplierPo.company_location_id) : ''),
+        delivery_date: line.delivery_date ?? '',
+        incoterm_id: line.incoterm_id ? String(line.incoterm_id) : (supplierPo.incoterm_id ? String(supplierPo.incoterm_id) : ''),
+        coo_entries: cooEntriesFromRecord(line.coo_entries),
     }));
     terms.value = supplierPo.terms.map((term, index) => ({
         key: term.key,
@@ -428,6 +752,7 @@ function applySupplierPo(supplierPo: SupplierPoRecord): void {
         description: term.description,
         localKey: Date.now() + index,
     }));
+    lastAutomaticDeliveryTerm.value = automaticDeliveryTermDescription();
     createdSupplierPo.value = supplierPo;
     window.setTimeout(() => {
         form.supplier_contact_id = String(supplierPo.supplier_contact_id);
@@ -440,6 +765,14 @@ function pendingItemParams(): URLSearchParams {
 
     if (form.supplier_id) {
         params.set('supplier_id', form.supplier_id);
+    }
+
+    if (form.company_location_id) {
+        params.set('company_location_id', form.company_location_id);
+    }
+
+    if (editId.value) {
+        params.set('supplier_po_id', String(editId.value));
     }
 
     if (itemFilters.current_only) {
@@ -479,7 +812,9 @@ async function loadOptions(): Promise<void> {
     try {
         const params = pendingItemParams();
         options.value = await requestJson<SupplierPoOptions>(`/api/supplier-pos/create-options${params.toString() ? `?${params.toString()}` : ''}`);
-        initializeTerms(options.value.term_defaults.length > 0 ? options.value.term_defaults : fallbackTermDefaults);
+        if (terms.value.length === 0) {
+            initializeTerms(options.value.term_defaults.length > 0 ? options.value.term_defaults : fallbackTermDefaults);
+        }
 
         if (isEditing.value && editId.value) {
             const payload = await requestJson<{ data: SupplierPoRecord }>(`/api/supplier-pos/${editId.value}`);
@@ -504,6 +839,7 @@ async function loadPendingItems(): Promise<void> {
             suppliers: payload.suppliers,
             supplier_contacts: payload.supplier_contacts,
             incoterms: payload.incoterms,
+            countries: payload.countries,
             currencies: payload.currencies,
             period_units: payload.period_units,
             delivery_types: payload.delivery_types,
@@ -543,6 +879,7 @@ async function saveSupplierPo(): Promise<void> {
             body: JSON.stringify({
                 supplier_id: Number(form.supplier_id),
                 supplier_contact_id: Number(form.supplier_contact_id),
+                company_location_id: form.company_location_id ? Number(form.company_location_id) : null,
                 supplier_quote_reference: form.supplier_quote_reference.trim() || null,
                 payment_term_days: Number(form.payment_term_days),
                 delivery_period_min: Number(form.delivery_period_min),
@@ -556,8 +893,14 @@ async function saveSupplierPo(): Promise<void> {
                 items: selectedLines.value.map((line) => ({
                     quotation_item_id: line.quotation_item_id,
                     unit_cost: Number(line.unit_cost),
+                    item_description: line.item_description,
+                    company_location_id: line.company_location_id ? Number(line.company_location_id) : null,
+                    delivery_date: line.delivery_date || null,
+                    incoterm_id: line.incoterm_id ? Number(line.incoterm_id) : null,
+                    coo_entries: cooPayloadEntries(line),
                 })),
-                terms: terms.value.map((term) => ({
+                terms: terms.value.map((term, index) => ({
+                    line_number: index + 1,
                     key: term.key,
                     title: term.title.trim(),
                     description: term.description.trim(),
@@ -583,7 +926,17 @@ async function downloadDocument(format: 'docx' | 'pdf'): Promise<void> {
     }
 
     try {
-        await downloadProtectedFile(createdSupplierPo.value.downloads[format], `${createdSupplierPo.value.po_reference}.${format}`);
+        const filename = `${createdSupplierPo.value.po_reference}-REV-${createdSupplierPo.value.revision_number}.${format}`.toUpperCase();
+        await downloadProtectedFile(createdSupplierPo.value.downloads[format], filename);
+    } catch (error) {
+        showToast('error', error instanceof Error ? error.message : 'Unable to download supplier PO.');
+    }
+}
+
+async function downloadRevisionDocument(revision: SupplierPoRevisionRecord, format: 'docx' | 'pdf'): Promise<void> {
+    try {
+        const filename = `${revision.po_reference}-REV-${revision.revision_number}.${format}`.toUpperCase();
+        await downloadProtectedFile(revision.downloads[format], filename);
     } catch (error) {
         showToast('error', error instanceof Error ? error.message : 'Unable to download supplier PO.');
     }
@@ -597,10 +950,55 @@ watch(
         }
 
         const supplier = selectedSupplier.value;
-        form.supplier_contact_id = supplier?.primary_contact_id ? String(supplier.primary_contact_id) : '';
+        const previousFactoryId = form.company_location_id;
+        form.company_location_id = supplier?.locations.length === 1 ? String(supplier.locations[0].id) : '';
+        const primaryContact = filteredSupplierContacts.value.find((contact) => contact.id === supplier?.primary_contact_id)
+            ?? filteredSupplierContacts.value.find((contact) => contact.is_primary_supplier)
+            ?? filteredSupplierContacts.value[0];
+        form.supplier_contact_id = primaryContact ? String(primaryContact.id) : '';
+        selectedLines.value = [];
+        selectedItemCache.value = {};
+
+        if (previousFactoryId === form.company_location_id) {
+            void loadPendingItems();
+        }
+    },
+);
+
+watch(
+    () => form.company_location_id,
+    () => {
+        if (isHydrating.value) return;
+
+        const selectedContactStillApplies = filteredSupplierContacts.value.some(
+            (contact) => String(contact.id) === String(form.supplier_contact_id),
+        );
+
+        if (!selectedContactStillApplies) {
+            const preferredContact = filteredSupplierContacts.value.find((contact) => contact.id === selectedSupplier.value?.primary_contact_id)
+                ?? filteredSupplierContacts.value.find((contact) => contact.is_primary_supplier)
+                ?? filteredSupplierContacts.value[0];
+            form.supplier_contact_id = preferredContact ? String(preferredContact.id) : '';
+        }
+
         selectedLines.value = [];
         selectedItemCache.value = {};
         void loadPendingItems();
+    },
+);
+
+watch(
+    () => form.incoterm_id,
+    () => {
+        selectedLines.value.forEach((line) => {
+            if (!line.incoterm_id && form.incoterm_id) {
+                line.incoterm_id = String(form.incoterm_id);
+            }
+        });
+
+        if (!isHydrating.value) {
+            refreshAutomaticDeliveryTerm();
+        }
     },
 );
 
@@ -714,7 +1112,21 @@ onMounted(loadOptions);
                         <select v-model="form.supplier_id" required>
                             <option value="">Select supplier</option>
                             <option v-for="supplier in options.suppliers" :key="supplier.id" :value="supplier.id">
-                                {{ supplier.company_name }} - {{ supplier.company_code ?? 'SUP' }} - {{ supplier.manufacturer_name ?? 'No manufacturer link' }}
+                                {{ supplier.company_name }} - {{ supplier.company_code ?? 'SUP' }} - {{ supplier.manufacturers.map((manufacturer) => manufacturer.name).join(', ') || 'No manufacturer link' }}
+                            </option>
+                        </select>
+                    </label>
+
+                    <label class="quote-field">
+                        <span>Supplier Factory<b v-if="selectedSupplier?.requires_factory">*</b></span>
+                        <select
+                            v-model="form.company_location_id"
+                            :required="selectedSupplier?.requires_factory"
+                            :disabled="!selectedSupplier || supplierFactories.length === 0"
+                        >
+                            <option value="">{{ supplierFactories.length ? 'Select factory' : 'No factory recorded' }}</option>
+                            <option v-for="factory in supplierFactories" :key="factory.id" :value="factory.id">
+                                {{ factory.name }} - {{ factory.location }}{{ factory.status === 'inactive' ? ' (inactive — retained)' : '' }}
                             </option>
                         </select>
                     </label>
@@ -724,7 +1136,7 @@ onMounted(loadOptions);
                         <select v-model="form.supplier_contact_id" required :disabled="!form.supplier_id">
                             <option value="">Select contact</option>
                             <option v-for="contact in filteredSupplierContacts" :key="contact.id" :value="contact.id">
-                                {{ contact.name }}
+                                {{ contact.name }}{{ contact.status === 'inactive' ? ' (inactive — retained)' : '' }}
                             </option>
                         </select>
                     </label>
@@ -769,7 +1181,7 @@ onMounted(loadOptions);
                         <span>Delivery Term</span>
                         <select v-model="form.incoterm_id">
                             <option value="">Select Incoterm</option>
-                            <option v-for="incoterm in options.incoterms" :key="String(incoterm.id)" :value="incoterm.id">
+                            <option v-for="incoterm in options.incoterms" :key="String(incoterm.id)" :value="String(incoterm.id)">
                                 {{ incoterm.code }} - {{ incoterm.name }}
                             </option>
                         </select>
@@ -806,8 +1218,12 @@ onMounted(loadOptions);
                             <dd>{{ selectedSupplier?.company_name ?? '-' }}</dd>
                         </div>
                         <div>
-                            <dt>Linked Manufacturer</dt>
-                            <dd>{{ selectedSupplier?.manufacturer_name ?? 'Any manufacturer' }}</dd>
+                            <dt>Linked Manufacturers</dt>
+                            <dd>{{ selectedSupplier?.manufacturers.map((manufacturer) => manufacturer.name).join(', ') || 'No manufacturer link' }}</dd>
+                        </div>
+                        <div>
+                            <dt>Factory</dt>
+                            <dd>{{ selectedFactory ? `${selectedFactory.name} — ${selectedFactory.location}` : (selectedSupplier?.requires_factory ? 'Select a factory' : 'Not required') }}</dd>
                         </div>
                         <div>
                             <dt>Contact</dt>
@@ -896,11 +1312,88 @@ onMounted(loadOptions);
 
             <div v-if="selectedItems.length" class="supplier-po-selection-strip">
                 <article v-for="entry in selectedItems" :key="entry.item.quotation_item_id">
-                    <div>
-                        <strong>{{ entry.item.title }}</strong>
-                        <span>{{ entry.item.buyer_company_name }} | {{ entry.item.quotation_reference }}</span>
+                    <header class="supplier-po-selected-head">
+                        <div>
+                            <strong>{{ entry.item.product_code ?? '-' }} - {{ entry.item.title }}</strong>
+                            <span>{{ entry.item.buyer_company_name }} | Buyer PO {{ entry.item.buyer_po_number }} | {{ entry.item.quotation_reference }}</span>
+                        </div>
+                        <button class="table-link-button" type="button" @click="removeSelectedItem(entry.item.quotation_item_id)">Remove</button>
+                    </header>
+                    <div class="supplier-po-line-controls">
+                        <label class="quote-field">
+                            <span>Supplier Unit Cost<b>*</b></span>
+                            <input
+                                v-model.number="entry.line.unit_cost"
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                required
+                                placeholder="Enter supplier cost"
+                            />
+                        </label>
+                        <label class="quote-field">
+                            <span>Factory<b v-if="lineFactoryRequired()">*</b></span>
+                            <select
+                                v-model="entry.line.company_location_id"
+                                :required="lineFactoryRequired()"
+                                :disabled="!lineFactoryOptions(entry.item, entry.line).length"
+                            >
+                                <option value="">{{ lineFactoryOptions(entry.item, entry.line).length ? 'Select factory' : 'No matching factory' }}</option>
+                                <option v-for="factory in lineFactoryOptions(entry.item, entry.line)" :key="factory.id" :value="String(factory.id)">
+                                    {{ factoryOptionLabel(factory) }}
+                                </option>
+                            </select>
+                        </label>
+                        <label class="quote-field">
+                            <span>Delivery Date<b>*</b></span>
+                            <input v-model="entry.line.delivery_date" type="date" required />
+                        </label>
+                        <label class="quote-field">
+                            <span>Incoterm<b>*</b></span>
+                            <select v-model="entry.line.incoterm_id" required>
+                                <option value="">Select Incoterm</option>
+                                <option v-for="incoterm in options.incoterms" :key="String(incoterm.id)" :value="String(incoterm.id)">
+                                    {{ incoterm.code }} - {{ incoterm.name }}
+                                </option>
+                            </select>
+                        </label>
                     </div>
-                    <button class="table-link-button" type="button" @click="removeSelectedItem(entry.item.quotation_item_id)">Remove</button>
+                    <label class="quote-field supplier-po-description-editor">
+                        <span>Manufacturer / Supplier Description<b>*</b></span>
+                        <RichTextEditor v-model="entry.line.item_description" placeholder="Description and technical notes for the supplier PO" />
+                    </label>
+                    <section class="supplier-po-coo-panel">
+                        <header class="supplier-po-coo-heading">
+                            <span>Country of Origin</span>
+                            <button class="table-link-button" type="button" @click="addCooEntry(entry.line)">Add COO</button>
+                        </header>
+                        <div v-if="entry.line.coo_entries.length" class="supplier-po-coo-rows">
+                            <div v-for="origin in entry.line.coo_entries" :key="origin.localKey" class="supplier-po-coo-row">
+                                <label class="quote-field">
+                                    <span>Country</span>
+                                    <select v-model="origin.country_id">
+                                        <option value="">Optional country</option>
+                                        <option v-for="country in options.countries" :key="country.id" :value="String(country.id)">
+                                            {{ country.name }}
+                                        </option>
+                                    </select>
+                                </label>
+                                <label class="quote-field">
+                                    <span>Origin Name</span>
+                                    <input v-model.trim="origin.country_name" type="text" maxlength="120" placeholder="Manual COO name" />
+                                </label>
+                                <label class="quote-field">
+                                    <span>Amount</span>
+                                    <input v-model.number="origin.amount" type="number" min="0" step="0.001" placeholder="0.000" />
+                                </label>
+                                <label class="quote-field">
+                                    <span>Factory / Location</span>
+                                    <input v-model.trim="origin.location" type="text" maxlength="255" placeholder="Factory or city" />
+                                </label>
+                                <button class="table-link-button supplier-po-coo-remove" type="button" @click="removeCooEntry(entry.line, origin.localKey)">Remove</button>
+                            </div>
+                        </div>
+                    </section>
                 </article>
             </div>
 
@@ -915,27 +1408,22 @@ onMounted(loadOptions);
                         <label>
                             <input type="checkbox" :checked="Boolean(selectedLineFor(item.quotation_item_id))" @change="toggleItem(item)" />
                             <span>
-                                <strong>{{ item.title }}</strong>
-                                <small>{{ item.buyer_company_name }} | Buyer PO {{ item.buyer_po_number }} | {{ item.quotation_reference }} | {{ item.buyer_po_date ?? '-' }}</small>
+                                <strong>{{ item.product_code ?? '-' }} - {{ item.title }}</strong>
+                                <small>{{ item.buyer_company_name }} | Buyer PO {{ item.buyer_po_number }} | Buyer Item {{ item.buyer_item_code ?? '-' }} | {{ item.quotation_reference }} | {{ item.buyer_po_date ?? '-' }}</small>
                             </span>
                         </label>
 
                         <div>
                             <span>{{ item.manufacturer_name ?? '-' }}</span>
                             <b>{{ item.quantity }} {{ item.uom }}</b>
+                            <small>Delivery {{ item.delivery_date ?? '-' }} | {{ item.incoterm_code ?? 'No Incoterm' }}</small>
                         </div>
 
-                        <label class="quote-field">
-                            <span>Unit Cost</span>
-                            <input
-                                :value="selectedLineFor(item.quotation_item_id)?.unit_cost ?? Number(item.quotation_unit_price)"
-                                type="number"
-                                min="0"
-                                step="0.001"
-                                :disabled="!selectedLineFor(item.quotation_item_id)"
-                                @input="updateLineCostFromEvent(item.quotation_item_id, $event)"
-                            />
-                        </label>
+                        <div>
+                            <span>Buyer Amount</span>
+                            <b>{{ item.buyer_po_item_amount ?? item.quotation_total_price }}</b>
+                            <small>Quote unit {{ item.quotation_unit_price }}</small>
+                        </div>
                     </article>
                 </template>
             </div>
@@ -968,7 +1456,16 @@ onMounted(loadOptions);
             </header>
 
             <div class="terms-body">
-                <article v-for="term in terms" :key="term.localKey" class="custom-term-row supplier-po-term-row">
+                <article v-for="(term, index) in terms" :key="term.localKey" class="custom-term-row supplier-po-term-row">
+                    <div class="term-sequence-tools">
+                        <span>{{ index + 1 }}</span>
+                        <button type="button" :disabled="index === 0" aria-label="Move term up" @click="moveTerm(index, -1)">
+                            <ArrowUp :size="14" aria-hidden="true" />
+                        </button>
+                        <button type="button" :disabled="index === terms.length - 1" aria-label="Move term down" @click="moveTerm(index, 1)">
+                            <ArrowDown :size="14" aria-hidden="true" />
+                        </button>
+                    </div>
                     <label class="quote-field">
                         <span>Title<b>*</b></span>
                         <input v-model.trim="term.title" type="text" required placeholder="Term title" />
@@ -1012,6 +1509,10 @@ onMounted(loadOptions);
                             <dd>{{ selectedSupplier?.company_name ?? '-' }}</dd>
                         </div>
                         <div>
+                            <dt>Factory</dt>
+                            <dd>{{ selectedFactory ? `${selectedFactory.name} — ${selectedFactory.location}` : 'Not required' }}</dd>
+                        </div>
+                        <div>
                             <dt>Payment</dt>
                             <dd>{{ form.payment_term_days }} days from supplier invoice</dd>
                         </div>
@@ -1033,8 +1534,11 @@ onMounted(loadOptions);
                     <h3>Selected Items</h3>
                     <div class="review-list">
                         <article v-for="entry in selectedItems" :key="entry.item.quotation_item_id">
-                            <strong>{{ entry.item.title }}</strong>
-                            <span>{{ entry.item.buyer_company_name }} | {{ entry.item.buyer_po_number }}</span>
+                            <strong>{{ entry.item.product_code ?? '-' }} - {{ entry.item.title }}</strong>
+                            <span>{{ entry.item.buyer_company_name }} | {{ entry.item.buyer_po_number }} | Buyer Item {{ entry.item.buyer_item_code ?? '-' }}</span>
+                            <span>Factory {{ lineFactoryLabel(entry.line, entry.item) }}</span>
+                            <span>Delivery {{ entry.line.delivery_date || '-' }} | {{ incotermOptionLabel(entry.line.incoterm_id) }}</span>
+                            <span v-if="visibleCooEntries(entry.line).length">COO: {{ visibleCooEntries(entry.line).map(cooEntrySummary).join('; ') }}</span>
                             <b>{{ form.accepted_invoice_currency }} {{ money(Number(entry.item.quantity) * Number(entry.line.unit_cost)) }}</b>
                         </article>
                     </div>
@@ -1052,8 +1556,16 @@ onMounted(loadOptions);
                             <dd>{{ createdSupplierPo.po_reference }}</dd>
                         </div>
                         <div>
+                            <dt>Revision</dt>
+                            <dd>Rev {{ createdSupplierPo.revision_number }}</dd>
+                        </div>
+                        <div>
                             <dt>Supplier</dt>
                             <dd>{{ createdSupplierPo.supplier_company_name }}</dd>
+                        </div>
+                        <div v-if="createdSupplierPo.factory_name">
+                            <dt>Factory</dt>
+                            <dd>{{ createdSupplierPo.factory_name }}<template v-if="createdSupplierPo.factory_location"> — {{ createdSupplierPo.factory_location }}</template></dd>
                         </div>
                         <div>
                             <dt>Total</dt>
@@ -1069,6 +1581,22 @@ onMounted(loadOptions);
                             <Download :size="17" aria-hidden="true" />
                             PDF
                         </button>
+                    </div>
+                    <div v-if="createdSupplierPo.revisions.length" class="revision-history-list">
+                        <article v-for="revision in createdSupplierPo.revisions" :key="revision.id">
+                            <span>
+                                <strong>Rev {{ revision.revision_number }}</strong>
+                                <small>{{ revision.finalized_at ?? '-' }}</small>
+                            </span>
+                            <button class="table-link-button" type="button" @click="downloadRevisionDocument(revision, 'docx')">
+                                <Download :size="15" aria-hidden="true" />
+                                Word
+                            </button>
+                            <button class="table-link-button" type="button" @click="downloadRevisionDocument(revision, 'pdf')">
+                                <Download :size="15" aria-hidden="true" />
+                                PDF
+                            </button>
+                        </article>
                     </div>
                 </section>
             </div>

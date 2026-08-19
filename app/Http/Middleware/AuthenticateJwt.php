@@ -12,9 +12,7 @@ use Throwable;
 
 class AuthenticateJwt
 {
-    public function __construct(private readonly JwtTokenService $tokens)
-    {
-    }
+    public function __construct(private readonly JwtTokenService $tokens) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -36,7 +34,7 @@ class AuthenticateJwt
 
         $user = User::with('roles')->find((int) ($payload->sub ?? 0));
 
-        if (! $user) {
+        if (! $user || $user->status !== 'active') {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 

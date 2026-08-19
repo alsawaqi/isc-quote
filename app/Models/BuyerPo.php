@@ -63,4 +63,14 @@ class BuyerPo extends Model
     {
         return $this->hasMany(SupplierPoLine::class);
     }
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(BuyerPoItem::class)->orderBy('line_number');
+    }
+
+    public function itemFulfilments(): HasMany
+    {
+        return $this->hasMany(ItemFulfilment::class);
+    }
 }

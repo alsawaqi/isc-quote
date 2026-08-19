@@ -13,6 +13,8 @@ class PackingList extends Model
 
     protected $fillable = [
         'follow_up_item_id',
+        'quotation_id',
+        'buyer_po_id',
         'packing_list_reference',
         'packing_list_date',
         'package_size',
@@ -34,6 +36,16 @@ class PackingList extends Model
     public function followUpItem(): BelongsTo
     {
         return $this->belongsTo(FollowUpItem::class);
+    }
+
+    public function quotation(): BelongsTo
+    {
+        return $this->belongsTo(Quotation::class);
+    }
+
+    public function buyerPo(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPo::class);
     }
 
     public function creator(): BelongsTo

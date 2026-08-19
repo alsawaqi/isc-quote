@@ -251,6 +251,7 @@ class AdminTraceabilityApiTest extends TestCase
         ]);
         $product = Product::create([
             'manufacturer_id' => $context['manufacturer']->id,
+            'product_code' => "TRACE-{$buyerCode}",
             'name' => $productName,
             'title' => $productName,
             'buyer_description' => '<p>Buyer visible description.</p>',
@@ -264,6 +265,7 @@ class AdminTraceabilityApiTest extends TestCase
             'product_id' => $product->id,
             'manufacturer_id' => $context['manufacturer']->id,
             'line_number' => 1,
+            'product_code' => "TRACE-{$buyerCode}",
             'product_name' => $product->name,
             'title' => $product->title,
             'buyer_description' => $product->buyer_description,
@@ -325,6 +327,7 @@ class AdminTraceabilityApiTest extends TestCase
             'product_id' => $item->product_id,
             'manufacturer_id' => $item->manufacturer_id,
             'line_number' => 1,
+            'product_code' => $item->product_code,
             'product_name' => $item->product_name,
             'title' => $item->title,
             'item_description' => $item->manufacturer_description,

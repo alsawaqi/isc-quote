@@ -48,7 +48,12 @@ class JwtRefreshTokenService
 
         $user = User::with(['roles.permissions', 'permissions', 'contact.company'])->find($token->user_id);
 
-        if (! $user) {
+        if (! $user || $user->status !== 'active') {
+            JwtRefreshToken::query()
+                ->where('user_id', $token->user_id)
+                ->whereNull('revoked_at')
+                ->update(['revoked_at' => Carbon::now()]);
+
             return null;
         }
 

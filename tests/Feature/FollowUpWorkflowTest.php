@@ -4,11 +4,15 @@ namespace Tests\Feature;
 
 use App\Models\BuyerPo;
 use App\Models\Company;
+use App\Models\CompanyLocation;
 use App\Models\Contact;
 use App\Models\Country;
+use App\Models\DeliveryOrder;
 use App\Models\Designation;
 use App\Models\Incoterm;
 use App\Models\Manufacturer;
+use App\Models\PaymentPlanFollowUpAttachment;
+use App\Models\Permission;
 use App\Models\Product;
 use App\Models\Quotation;
 use App\Models\QuotationItem;
@@ -62,6 +66,8 @@ class FollowUpWorkflowTest extends TestCase
         $response->assertJsonPath('summary.total', 2)
             ->assertJsonPath('summary.awaiting_acknowledgement', 2)
             ->assertJsonPath('data.0.supplier_po_reference', $supplierPo['po_reference'])
+            ->assertJsonPath('data.0.factory_name', 'Muscat Assembly Plant')
+            ->assertJsonPath('data.0.factory_location', 'Muscat, Oman')
             ->assertJsonPath('data.0.assigned_to_name', $context['followUp']->name);
 
         $this->withBearerToken($context['salesperson'])
@@ -184,6 +190,7 @@ class FollowUpWorkflowTest extends TestCase
         $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
         $secondProduct = Product::create([
             'manufacturer_id' => $context['manufacturer']->id,
+            'product_code' => 'ABB-TB-001',
             'name' => 'ABB Terminal Box',
             'title' => 'ABB Terminal Box',
             'buyer_description' => '<p>Second buyer-visible description.</p>',
@@ -197,6 +204,7 @@ class FollowUpWorkflowTest extends TestCase
             'product_id' => $secondProduct->id,
             'manufacturer_id' => $context['manufacturer']->id,
             'line_number' => 2,
+            'product_code' => 'ABB-TB-001',
             'product_name' => $secondProduct->name,
             'title' => $secondProduct->title,
             'buyer_description' => $secondProduct->buyer_description,
@@ -229,7 +237,10 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.quotation.payment_term_days', 45)
             ->assertJsonPath('data.quotation.incoterm_code', 'CPT')
             ->assertJsonPath('data.items.0.id', $followUpIds[0])
-            ->assertJsonPath('data.items.1.id', $followUpIds[1]);
+            ->assertJsonPath('data.items.0.factory_name', 'Muscat Assembly Plant')
+            ->assertJsonPath('data.items.1.id', $followUpIds[1])
+            ->assertJsonPath('data.invoice_scope.supports_partial_invoices', true)
+            ->assertJsonPath('data.invoice_scope.supports_full_quotation_invoice', false);
 
         $this->assertCount(2, $detail->json('data.groups'));
 
@@ -242,6 +253,7 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('message', 'Follow-up group saved.')
             ->assertJsonPath('data.groups.0.group_name', 'ABB shared shipment')
             ->assertJsonPath('data.groups.0.workflow_mode', 'shared')
+            ->assertJsonPath('data.groups.0.factory_names.0', 'Muscat Assembly Plant - Muscat, Oman')
             ->assertJsonPath('data.groups.0.item_count', 2);
 
         $groupKey = $groupResponse->json('data.groups.0.group_key');
@@ -270,6 +282,166 @@ class FollowUpWorkflowTest extends TestCase
                 'follow_up_group_mode' => 'individual',
             ]);
         }
+    }
+
+    public function test_follow_up_user_can_apply_selected_item_updates_inside_a_quotation_workspace(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+
+        try {
+            $context = $this->followUpContext();
+            $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+            $secondProduct = Product::create([
+                'manufacturer_id' => $context['manufacturer']->id,
+                'product_code' => 'ABB-TB-001',
+                'name' => 'ABB Terminal Box',
+                'title' => 'ABB Terminal Box',
+                'buyer_description' => '<p>Second buyer-visible description.</p>',
+                'manufacturer_description' => '<p>Second supplier-visible description.</p>',
+                'last_uom' => 'EA',
+                'last_unit_price' => '3256.000',
+                'status' => 'active',
+            ]);
+            $second = QuotationItem::create([
+                'quotation_id' => $first['quotation']->id,
+                'product_id' => $secondProduct->id,
+                'manufacturer_id' => $context['manufacturer']->id,
+                'line_number' => 2,
+                'product_code' => 'ABB-TB-001',
+                'product_name' => $secondProduct->name,
+                'title' => $secondProduct->title,
+                'buyer_description' => $secondProduct->buyer_description,
+                'manufacturer_description' => $secondProduct->manufacturer_description,
+                'quantity' => '1.000',
+                'uom' => 'EA',
+                'unit_price' => '3256.000',
+                'total_price' => '3256.000',
+            ]);
+            $supplierPo = $this->createSupplierPo($context, [$first['item'], $second]);
+            $followUpIds = DB::table('follow_up_items')
+                ->where('supplier_po_id', $supplierPo['id'])
+                ->orderBy('quotation_item_id')
+                ->pluck('id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+
+            $this->withBearerToken($context['followUp']);
+            Carbon::setTestNow(Carbon::parse('2026-06-08 10:15:00'));
+
+            $this->postJson("/api/follow-up/quotations/{$first['quotation']->id}/bulk-action", [
+                'action' => 'acknowledgement_record',
+                'follow_up_item_ids' => $followUpIds,
+                'acknowledgement_received_at' => '2026-06-08 10:15:00',
+                'acknowledgement_notes' => 'Supplier acknowledged both selected lines.',
+            ])
+                ->assertOk()
+                ->assertJsonPath('updated_item_ids', $followUpIds)
+                ->assertJsonPath('data.items.0.status', 'acknowledged')
+                ->assertJsonPath('data.items.1.status', 'acknowledged');
+
+            foreach ($followUpIds as $id) {
+                $this->assertDatabaseHas('follow_up_items', [
+                    'id' => $id,
+                    'status' => 'acknowledged',
+                    'acknowledgement_notes' => 'Supplier acknowledged both selected lines.',
+                ]);
+                $this->assertDatabaseHas('follow_up_audit_logs', [
+                    'follow_up_item_id' => $id,
+                    'action' => 'acknowledgement.recorded',
+                ]);
+            }
+
+            $this->postJson("/api/follow-up/quotations/{$first['quotation']->id}/bulk-action", [
+                'action' => 'comment_add',
+                'follow_up_item_ids' => $followUpIds,
+                'comment' => 'Supplier confirmed manufacturing slot for both items.',
+                'stage' => 'shipping',
+                'communication_type' => 'email',
+                'contacted_person' => 'ABB logistics desk',
+                'next_action' => 'Wait for supplier invoice and COO.',
+            ])
+                ->assertOk()
+                ->assertJsonPath('data.items.0.latest_comment.comment', 'Supplier confirmed manufacturing slot for both items.')
+                ->assertJsonPath('data.items.1.latest_comment.stage', 'shipping');
+
+            foreach ($followUpIds as $id) {
+                $this->assertDatabaseHas('follow_up_comments', [
+                    'follow_up_item_id' => $id,
+                    'stage' => 'shipping',
+                    'comment' => 'Supplier confirmed manufacturing slot for both items.',
+                ]);
+            }
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_group_mutations_require_ownership_but_admin_can_manage_all_and_permission_is_honored(): void
+    {
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $permission = Permission::create([
+            'name' => 'Manage Follow-Ups',
+            'slug' => 'manage-follow-ups',
+            'group' => 'Follow-Up',
+        ]);
+        $permissionManager = User::create([
+            'name' => 'Permission Follow-Up Manager',
+            'email' => 'permission-follow-up@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+        $permissionManager->permissions()->attach($permission);
+        DB::table('follow_up_items')->where('id', $followUpItemId)->update([
+            'assigned_to' => $permissionManager->id,
+        ]);
+
+        $payload = [
+            'group_name' => 'Permission-owned shipment',
+            'workflow_mode' => 'shared',
+            'follow_up_item_ids' => [$followUpItemId],
+        ];
+
+        $this->withBearerToken($context['followUp'])
+            ->postJson("/api/follow-up/quotations/{$first['quotation']->id}/groups", $payload)
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('follow_up_items', [
+            'id' => $followUpItemId,
+            'assigned_to' => $permissionManager->id,
+            'follow_up_group_key' => null,
+        ]);
+
+        $groupKey = $this->withBearerToken($permissionManager)
+            ->postJson("/api/follow-up/quotations/{$first['quotation']->id}/groups", $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.groups.0.item_count', 1)
+            ->json('data.groups.0.group_key');
+
+        $this->withBearerToken($context['followUp'])
+            ->deleteJson("/api/follow-up/quotations/{$first['quotation']->id}/groups/{$groupKey}")
+            ->assertForbidden();
+
+        $admin = $this->adminUser();
+        $this->withBearerToken($admin)
+            ->deleteJson("/api/follow-up/quotations/{$first['quotation']->id}/groups/{$groupKey}")
+            ->assertOk();
+
+        $adminGroupKey = $this->postJson("/api/follow-up/quotations/{$first['quotation']->id}/groups", [
+            ...$payload,
+            'group_name' => 'Admin-managed shipment',
+        ])
+            ->assertCreated()
+            ->json('data.groups.0.group_key');
+
+        $this->deleteJson("/api/follow-up/quotations/{$first['quotation']->id}/groups/{$adminGroupKey}")
+            ->assertOk();
     }
 
     public function test_notifications_return_actionable_follow_up_alerts_with_clean_labels(): void
@@ -309,6 +481,46 @@ class FollowUpWorkflowTest extends TestCase
 
             $this->assertStringNotContainsString('_', $response->json('data.0.stage_label'));
             $this->assertStringNotContainsString('_', $response->json('data.1.stage_label'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_notifications_include_due_payment_plan_follow_ups(): void
+    {
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+
+        try {
+            $context = $this->followUpContext();
+            $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+            $first['quotation']->paymentSchedules()->create([
+                'line_number' => 1,
+                'label' => 'Advance cheque',
+                'payment_method' => 'cheque',
+                'payment_percentage' => 50,
+                'due_timing' => 'fixed_date',
+                'due_event' => null,
+                'due_offset_days' => null,
+                'due_date' => '2026-06-04',
+                'notes' => 'Collect cheque before delivery.',
+            ]);
+            $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+            $followUpItemId = (int) DB::table('follow_up_items')
+                ->where('supplier_po_id', $supplierPo['id'])
+                ->value('id');
+
+            Carbon::setTestNow(Carbon::parse('2026-06-05 09:00:00'));
+
+            $response = $this->withBearerToken($context['followUp'])
+                ->getJson('/api/notifications')
+                ->assertOk()
+                ->assertJsonPath('unread_count', 1)
+                ->assertJsonPath('data.0.type', 'payment_overdue')
+                ->assertJsonPath('data.0.title', 'Payment Plan Overdue')
+                ->assertJsonPath('data.0.action_url', "/follow-up/{$followUpItemId}")
+                ->assertJsonPath('data.0.stage_label', 'Payment / Close');
+
+            $this->assertStringContainsString('Advance cheque', $response->json('data.0.body'));
         } finally {
             Carbon::setTestNow();
         }
@@ -371,6 +583,117 @@ class FollowUpWorkflowTest extends TestCase
         } finally {
             Carbon::setTestNow();
         }
+    }
+
+    public function test_lifecycle_uploads_have_authorized_record_scoped_downloads_without_exposing_storage_paths(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        Storage::disk('local')->put($first['buyerPo']->po_file_path, 'buyer purchase order');
+        $first['buyerPo']->forceFill(['original_file_name' => 'buyer-po-4502757812.pdf'])->save();
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $this->withBearerToken($context['followUp']);
+
+        $acknowledgement = $this->post("/api/follow-up/{$followUpItemId}/acknowledgement", [
+            'acknowledgement_received_at' => '2026-06-08 10:15:00',
+            'acknowledgement_file' => UploadedFile::fake()->create('supplier-acknowledgement.pdf', 24, 'application/pdf'),
+        ])->assertOk()
+            ->assertJsonMissingPath('data.acknowledgement_file_path');
+        $acknowledgementUrl = (string) $acknowledgement->json('data.acknowledgement_download_url');
+
+        $this->get($acknowledgementUrl)
+            ->assertOk()
+            ->assertDownload('SUPPLIER-ACKNOWLEDGEMENT.PDF')
+            ->assertHeader('X-Content-Type-Options', 'nosniff');
+
+        $shipping = $this->post("/api/follow-up/{$followUpItemId}/shipping-documents/supplier_invoice", [
+            'document_file' => UploadedFile::fake()->create('supplier-invoice.pdf', 18, 'application/pdf'),
+            'document_number' => 'SUP-INV-001',
+        ])->assertOk()
+            ->assertJsonMissingPath('data.file_path');
+        $shippingUrl = (string) $shipping->json('data.download_url');
+
+        $this->get($shippingUrl)
+            ->assertOk()
+            ->assertDownload('SUPPLIER-INVOICE.PDF');
+
+        $detail = $this->getJson("/api/follow-up/{$followUpItemId}")->assertOk();
+        $buyerPoUrl = (string) $detail->json('data.buyer_po_download_url');
+        $this->get($buyerPoUrl)
+            ->assertOk()
+            ->assertDownload('BUYER-PO-4502757812.PDF');
+        $paymentPlanId = (int) $detail->json('data.payment_plan_follow_ups.0.id');
+        $paymentUpload = $this->post("/api/follow-up/{$followUpItemId}/payment-plan/{$paymentPlanId}/attachments", [
+            'attachment_file' => UploadedFile::fake()->create('payment-receipt.jpg', 12, 'image/jpeg'),
+            'attachment_remarks' => 'Receipt supplied by customer.',
+        ])->assertCreated();
+        $attachment = collect($paymentUpload->json('data.payment_plan_follow_ups'))
+            ->firstWhere('id', $paymentPlanId)['attachments'][0];
+
+        $this->assertArrayNotHasKey('file_path', $attachment);
+        $this->get($attachment['download_url'])
+            ->assertOk()
+            ->assertDownload('PAYMENT-RECEIPT.JPG');
+
+        $signedPath = "follow-up/{$followUpItemId}/signed-delivery-orders/signed-delivery-order.pdf";
+        Storage::disk('local')->put($signedPath, 'signed delivery order');
+        DeliveryOrder::query()->create([
+            'follow_up_item_id' => $followUpItemId,
+            'delivery_order_reference' => 'DO-SECURE-001',
+            'delivery_order_date' => '2026-06-22',
+            'delivery_place' => 'OXY Yard, Muscat',
+            'status' => 'signed',
+            'signed_file_path' => $signedPath,
+            'signed_original_file_name' => 'signed-delivery-order.pdf',
+            'signed_at' => '2026-06-22 13:30:00',
+            'created_by' => $context['followUp']->id,
+        ]);
+
+        $signedDetail = $this->getJson("/api/follow-up/{$followUpItemId}")
+            ->assertOk()
+            ->assertJsonMissingPath('data.delivery_order.signed_file_path');
+        $signedUrl = (string) $signedDetail->json('data.delivery_order.signed_download_url');
+
+        $this->get($signedUrl)
+            ->assertOk()
+            ->assertDownload('SIGNED-DELIVERY-ORDER.PDF');
+
+        $this->withBearerToken($context['salesperson'])
+            ->get($acknowledgementUrl)
+            ->assertOk()
+            ->assertDownload('SUPPLIER-ACKNOWLEDGEMENT.PDF');
+
+        $otherFollowUp = User::create([
+            'name' => 'Unassigned Follow-Up',
+            'email' => 'unassigned-follow-up@example.test',
+            'password' => Hash::make('password'),
+            'status' => 'active',
+        ]);
+        $otherFollowUp->roles()->attach(Role::query()->where('slug', 'follow-up')->firstOrFail());
+
+        $this->withBearerToken($otherFollowUp)
+            ->get($attachment['download_url'])
+            ->assertForbidden();
+        $this->get($buyerPoUrl)->assertForbidden();
+
+        $this->withBearerToken($this->adminUser())
+            ->get($signedUrl)
+            ->assertOk()
+            ->assertDownload('SIGNED-DELIVERY-ORDER.PDF');
+
+        Storage::disk('local')->put('follow-up/outside-item/stolen.pdf', 'not this payment plan');
+        $storedAttachment = PaymentPlanFollowUpAttachment::query()->findOrFail($attachment['id']);
+        $storedAttachment->forceFill(['file_path' => 'follow-up/outside-item/stolen.pdf'])->save();
+
+        $this->withBearerToken($context['followUp'])
+            ->get($attachment['download_url'])
+            ->assertNotFound();
     }
 
     public function test_follow_up_comments_are_required_to_belong_to_a_workflow_stage(): void
@@ -695,24 +1018,72 @@ class FollowUpWorkflowTest extends TestCase
             ->assertJsonPath('data.status', 'shipping_documents_complete');
     }
 
-    public function test_eta_cannot_start_until_shipping_documents_are_complete(): void
+    public function test_eta_can_be_recorded_before_shipping_documents_and_updated_without_advancing_stage(): void
     {
         Storage::disk('local')->deleteDirectory('follow-up');
         Storage::disk('local')->deleteDirectory('generated/supplier-pos');
-        $context = $this->followUpContext();
-        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
-        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
-        $followUpItemId = (int) DB::table('follow_up_items')
-            ->where('supplier_po_id', $supplierPo['id'])
-            ->value('id');
 
-        $this->withBearerToken($context['followUp'])
-            ->postJson("/api/follow-up/{$followUpItemId}/logistics/eta", [
+        try {
+            $context = $this->followUpContext();
+            $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+            $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+            $followUpItemId = (int) DB::table('follow_up_items')
+                ->where('supplier_po_id', $supplierPo['id'])
+                ->value('id');
+
+            $this->withBearerToken($context['followUp']);
+            Carbon::setTestNow(Carbon::parse('2026-06-05 09:00:00'));
+
+            $this->postJson("/api/follow-up/{$followUpItemId}/logistics/eta", [
                 'delivery_responsibility' => 'isc',
-                'eta_at' => '2026-06-20 15:00:00',
+                'eta_at' => '2026-07-20 15:00:00',
+                'agent_name' => 'Muscat Freight Services',
+                'remarks' => 'Supplier shared a provisional ETA before shipping documents.',
             ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['shipping_documents']);
+                ->assertOk()
+                ->assertJsonPath('data.status', 'awaiting_acknowledgement')
+                ->assertJsonPath('data.next_follow_up_at', '2026-06-20 15:00:00')
+                ->assertJsonPath('data.logistics_case.status', 'eta_recorded')
+                ->assertJsonPath('data.logistics_case.eta_at', '2026-07-20 15:00:00')
+                ->assertJsonPath('data.logistics_case.events.0.event_type', 'eta_recorded');
+
+            $this->assertDatabaseHas('follow_up_items', [
+                'id' => $followUpItemId,
+                'status' => 'awaiting_acknowledgement',
+                'next_follow_up_at' => '2026-06-20 15:00:00',
+            ]);
+
+            $this->postJson("/api/follow-up/quotations/{$first['quotation']->id}/bulk-action", [
+                'action' => 'eta_update',
+                'follow_up_item_ids' => [$followUpItemId],
+                'delivery_responsibility' => 'isc',
+                'eta_at' => '2026-07-25 12:00:00',
+                'remarks' => 'Supplier revised the ETA.',
+            ])
+                ->assertOk()
+                ->assertJsonPath('data.items.0.status', 'awaiting_acknowledgement')
+                ->assertJsonPath('data.items.0.next_follow_up_at', '2026-06-25 12:00:00')
+                ->assertJsonPath('data.items.0.logistics_case.eta_at', '2026-07-25 12:00:00')
+                ->assertJsonPath('data.items.0.logistics_case.events.0.event_type', 'eta_updated');
+
+            $this->assertDatabaseHas('follow_up_audit_logs', [
+                'follow_up_item_id' => $followUpItemId,
+                'action' => 'logistics.eta_updated',
+            ]);
+
+            $this->completeShippingDocumentsFor($context, $followUpItemId);
+
+            $this->postJson("/api/follow-up/{$followUpItemId}/logistics/eta", [
+                'delivery_responsibility' => 'isc',
+                'eta_at' => '2026-07-30 18:00:00',
+            ])
+                ->assertOk()
+                ->assertJsonPath('data.status', 'logistics_eta_recorded')
+                ->assertJsonPath('data.logistics_case.status', 'eta_recorded')
+                ->assertJsonPath('data.logistics_case.events.0.event_type', 'eta_updated');
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_follow_up_user_can_record_isc_eta_arrival_and_warehouse_receipt(): void
@@ -768,6 +1139,135 @@ class FollowUpWorkflowTest extends TestCase
             'event_type' => 'warehouse_received',
             'title' => 'Goods received at ISC warehouse',
         ]);
+    }
+
+    public function test_partial_delivery_receiving_invoicing_and_payment_track_item_balances(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+        Storage::disk('local')->deleteDirectory('generated/packing-lists');
+        Storage::disk('local')->deleteDirectory('generated/delivery-orders');
+        Storage::disk('local')->deleteDirectory('generated/invoices');
+
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $first['item']->forceFill([
+            'quantity' => '10.000',
+            'total_price' => '32560.000',
+        ])->save();
+        $first['buyerPo']->forceFill(['po_value' => '32560.000'])->save();
+        $first['buyerPo']->items()->create([
+            'quotation_id' => $first['quotation']->id,
+            'quotation_item_id' => $first['item']->id,
+            'line_number' => 1,
+            'buyer_item_code' => 'OXY-MOTOR-001',
+            'item_description' => $first['item']->buyer_description,
+            'quantity' => '10.000',
+            'uom' => 'EA',
+            'unit_price' => '3256.000',
+            'total_amount' => '32560.000',
+            'currency' => 'OMR',
+            'status' => 'open',
+        ]);
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $this->completeShippingDocumentsFor($context, $followUpItemId);
+        $this->withBearerToken($context['followUp']);
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/eta", [
+            'delivery_responsibility' => 'isc',
+            'eta_at' => '2026-06-20 15:00:00',
+            'agent_name' => 'Muscat Freight Services',
+        ])->assertOk();
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/arrived", [
+            'arrived_at' => '2026-06-20 14:30:00',
+        ])->assertOk();
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/warehouse-received", [
+            'warehouse_received_at' => '2026-06-21 09:15:00',
+            'received_location' => 'ISC Warehouse - Muscat',
+            'received_quantity' => '4.000',
+            'goods_condition' => 'Good condition',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'partially_received')
+            ->assertJsonPath('data.logistics_case.status', 'warehouse_partially_received')
+            ->assertJsonPath('data.fulfilment.received_quantity', '4.000')
+            ->assertJsonPath('data.fulfilment.remaining_receive_quantity', '6.000')
+            ->assertJsonPath('data.fulfilment.remaining_delivery_quantity', '4.000');
+
+        $deliveryOrder = $this->postJson("/api/follow-up/{$followUpItemId}/delivery-order", [
+            'delivery_place' => 'OXY Yard, Muscat',
+            'quantity' => '2.000',
+            'terms' => 'Partial delivery against buyer LPO 4502757812.',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'delivery_order_created')
+            ->assertJsonPath('data.delivery_order.total_quantity', '2.000')
+            ->assertJsonPath('data.delivery_order.items.0.buyer_item_code', 'OXY-MOTOR-001')
+            ->json('data.delivery_order');
+
+        $this->post("/api/follow-up/{$followUpItemId}/delivery-orders/{$deliveryOrder['id']}/signed", [
+            'signed_at' => '2026-06-22 13:30:00',
+            'signed_file' => UploadedFile::fake()->create('signed-partial-delivery-order.pdf', 20, 'application/pdf'),
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'ready_for_invoice')
+            ->assertJsonPath('data.fulfilment.delivered_quantity', '2.000')
+            ->assertJsonPath('data.fulfilment.remaining_delivery_quantity', '2.000')
+            ->assertJsonPath('data.fulfilment.remaining_invoice_quantity', '2.000');
+
+        $invoice = $this->postJson("/api/follow-up/{$followUpItemId}/invoice", [
+            'quantity' => '1.500',
+            'payment_term_days' => 45,
+            'bank_details' => "Bank Muscat\nAccount: 0123456789",
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'partially_invoiced')
+            ->assertJsonPath('data.invoice.subtotal', '4884.000')
+            ->assertJsonPath('data.invoice.vat_amount', '244.200')
+            ->assertJsonPath('data.invoice.total_amount', '5128.200')
+            ->assertJsonPath('data.fulfilment.invoiced_quantity', '1.500')
+            ->assertJsonPath('data.fulfilment.remaining_invoice_quantity', '0.500')
+            ->json('data.invoice');
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/payments", [
+            'invoice_id' => $invoice['id'],
+            'amount' => '1000.000',
+            'payment_date' => '2026-07-15',
+            'payment_reference' => 'TRN-PART-001',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'partially_paid')
+            ->assertJsonPath('data.invoice.balance_amount', '4128.200')
+            ->assertJsonPath('data.fulfilment.paid_amount', '1000.000')
+            ->assertJsonPath('data.fulfilment.remaining_quotation_amount', '33188.000');
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/warehouse-received", [
+            'warehouse_received_at' => '2026-06-23 09:15:00',
+            'received_location' => 'ISC Warehouse - Muscat',
+            'received_quantity' => '7.000',
+            'goods_condition' => 'Good condition',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['received_quantity']);
+
+        $this->postJson("/api/follow-up/{$followUpItemId}/logistics/warehouse-received", [
+            'warehouse_received_at' => '2026-06-23 10:15:00',
+            'received_location' => 'ISC Warehouse - Muscat',
+            'received_quantity' => '6.000',
+            'goods_condition' => 'Good condition',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'partially_paid')
+            ->assertJsonPath('data.logistics_case.status', 'warehouse_received')
+            ->assertJsonPath('data.fulfilment.received_quantity', '10.000')
+            ->assertJsonPath('data.fulfilment.remaining_receive_quantity', '0.000')
+            ->assertJsonPath('data.fulfilment.remaining_delivery_quantity', '8.000');
     }
 
     public function test_follow_up_user_can_send_documents_to_buyer_agent_and_record_buyer_receipt(): void
@@ -928,6 +1428,10 @@ class FollowUpWorkflowTest extends TestCase
         $zip = new ZipArchive;
         $this->assertTrue($zip->open($docxPath));
         $documentXml = $zip->getFromName('word/document.xml');
+        $this->assertDocxUsesRepeatingPageChrome(
+            $zip,
+            (string) $response->json('data.delivery_order.delivery_order_reference'),
+        );
         $zip->close();
 
         $this->assertStringContainsString('Delivery Order', (string) $documentXml);
@@ -1034,6 +1538,10 @@ class FollowUpWorkflowTest extends TestCase
         $zip = new ZipArchive;
         $this->assertTrue($zip->open($docxPath));
         $documentXml = $zip->getFromName('word/document.xml');
+        $this->assertDocxUsesRepeatingPageChrome(
+            $zip,
+            (string) $response->json('data.invoice.invoice_reference'),
+        );
         $zip->close();
 
         $this->assertStringContainsString('Tax Invoice', (string) $documentXml);
@@ -1088,6 +1596,90 @@ class FollowUpWorkflowTest extends TestCase
             ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['invoice']);
+    }
+
+    public function test_follow_up_user_can_mark_payment_plan_paid_and_upload_evidence(): void
+    {
+        Storage::disk('local')->deleteDirectory('follow-up');
+        Storage::disk('local')->deleteDirectory('generated/supplier-pos');
+        Storage::disk('local')->deleteDirectory('generated/packing-lists');
+        Storage::disk('local')->deleteDirectory('generated/delivery-orders');
+        Storage::disk('local')->deleteDirectory('generated/invoices');
+        $context = $this->followUpContext();
+        $first = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $first['quotation']->paymentSchedules()->create([
+            'line_number' => 1,
+            'label' => 'Advance transfer',
+            'payment_method' => 'bank_transfer',
+            'payment_percentage' => 50,
+            'due_timing' => 'fixed_date',
+            'due_event' => null,
+            'due_offset_days' => null,
+            'due_date' => '2026-07-10',
+            'notes' => 'Advance before delivery.',
+        ]);
+        $first['quotation']->paymentSchedules()->create([
+            'line_number' => 2,
+            'label' => 'Balance cheque',
+            'payment_method' => 'cheque',
+            'payment_percentage' => 50,
+            'due_timing' => 'relative',
+            'due_event' => 'after_delivery',
+            'due_offset_days' => 0,
+            'due_date' => null,
+            'notes' => null,
+        ]);
+        $supplierPo = $this->createSupplierPo($context, [$first['item']]);
+        $followUpItemId = (int) DB::table('follow_up_items')
+            ->where('supplier_po_id', $supplierPo['id'])
+            ->value('id');
+
+        $this->createInvoiceFor($context, $followUpItemId);
+        $this->withBearerToken($context['followUp']);
+
+        $detail = $this->getJson("/api/follow-up/{$followUpItemId}")
+            ->assertOk()
+            ->assertJsonPath('data.payment_plan_follow_ups.0.label', 'Advance transfer')
+            ->assertJsonPath('data.payment_plan_follow_ups.0.expected_amount', '1709.400')
+            ->assertJsonPath('data.payment_plan_follow_ups.0.status', 'pending');
+
+        $paymentPlanId = (int) $detail->json('data.payment_plan_follow_ups.0.id');
+        $file = UploadedFile::fake()->image('advance-transfer.jpg');
+
+        $this->post("/api/follow-up/{$followUpItemId}/payment-plan/{$paymentPlanId}/paid", [
+            'paid_at' => '2026-07-10',
+            'paid_amount' => '1709.400',
+            'payment_reference' => 'TRN-ADV-001',
+            'remarks' => 'Advance received by bank transfer.',
+            'attachment_file' => $file,
+            'attachment_remarks' => 'Bank receipt image.',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.payment_plan_follow_ups.0.status', 'paid')
+            ->assertJsonPath('data.payment_plan_follow_ups.0.paid_amount', '1709.400')
+            ->assertJsonPath('data.payment_plan_follow_ups.0.payment_reference', 'TRN-ADV-001')
+            ->assertJsonPath('data.payment_plan_follow_ups.0.attachments.0.original_file_name', 'advance-transfer.jpg')
+            ->assertJsonPath('data.invoice.payment_status', 'partially_paid')
+            ->assertJsonPath('data.invoice.paid_amount', '1709.400')
+            ->assertJsonPath('data.invoice.balance_amount', '1709.400');
+
+        $this->assertDatabaseHas('payment_plan_follow_ups', [
+            'id' => $paymentPlanId,
+            'status' => 'paid',
+            'payment_reference' => 'TRN-ADV-001',
+        ]);
+        $this->assertDatabaseHas('payments', [
+            'payment_plan_follow_up_id' => $paymentPlanId,
+            'payment_reference' => 'TRN-ADV-001',
+            'amount' => '1709.400',
+        ]);
+
+        $attachmentPath = DB::table('payment_plan_follow_up_attachments')
+            ->where('payment_plan_follow_up_id', $paymentPlanId)
+            ->value('file_path');
+
+        $this->assertNotNull($attachmentPath);
+        Storage::disk('local')->assertExists($attachmentPath);
     }
 
     public function test_invoice_can_be_marked_sent_and_payment_tracking_handles_partial_and_full_payment(): void
@@ -1273,6 +1865,15 @@ class FollowUpWorkflowTest extends TestCase
             'manufacturer_id' => $manufacturer->id,
             'status' => 'active',
         ]);
+        $factory = CompanyLocation::create([
+            'company_id' => $supplierCompany->id,
+            'manufacturer_id' => $manufacturer->id,
+            'country_id' => $country->id,
+            'location_type' => 'factory',
+            'name' => 'Muscat Assembly Plant',
+            'location' => 'Muscat, Oman',
+            'status' => 'active',
+        ]);
         Supplier::create([
             'company_id' => $internalCompany->id,
             'primary_contact_id' => $internalContact->id,
@@ -1313,7 +1914,7 @@ class FollowUpWorkflowTest extends TestCase
             'status' => 'active',
         ]);
 
-        return compact('country', 'designation', 'followUp', 'incoterm', 'internalCompany', 'internalContact', 'manufacturer', 'salesperson', 'supplier', 'supplierContact');
+        return compact('country', 'designation', 'factory', 'followUp', 'incoterm', 'internalCompany', 'internalContact', 'manufacturer', 'salesperson', 'supplier', 'supplierContact');
     }
 
     /**
@@ -1359,8 +1960,10 @@ class FollowUpWorkflowTest extends TestCase
             'status' => 'buyer_po_received',
         ]);
         $quotation->forceFill(['quotation_reference' => "ISC-COR-QT-{$quotation->id}-{$buyerCompany->company_code}-26"])->save();
+        $productCode = trim((string) preg_replace('/[^A-Za-z0-9]+/', '-', strtoupper($title)), '-');
         $product = Product::create([
             'manufacturer_id' => $context['manufacturer']->id,
+            'product_code' => $productCode,
             'name' => $title,
             'title' => $title,
             'buyer_description' => '<p>Buyer visible description.</p>',
@@ -1374,6 +1977,7 @@ class FollowUpWorkflowTest extends TestCase
             'product_id' => $product->id,
             'manufacturer_id' => $context['manufacturer']->id,
             'line_number' => 1,
+            'product_code' => $productCode,
             'product_name' => $product->name,
             'title' => $title,
             'buyer_description' => $product->buyer_description,
@@ -1420,6 +2024,7 @@ class FollowUpWorkflowTest extends TestCase
         $payload = [
             'supplier_id' => $context['supplier']->id,
             'supplier_contact_id' => $context['supplierContact']->id,
+            'company_location_id' => $context['factory']->id,
             'supplier_quote_reference' => 'E-mail',
             'payment_term_days' => 30,
             'delivery_period_min' => 22,
@@ -1432,6 +2037,7 @@ class FollowUpWorkflowTest extends TestCase
             'additional_charges' => '120.000',
             'items' => collect($items)->map(fn (QuotationItem $item): array => [
                 'quotation_item_id' => $item->id,
+                'company_location_id' => $context['factory']->id,
                 'unit_cost' => '5041.350',
             ])->values()->all(),
             'terms' => [
@@ -1558,5 +2164,43 @@ class FollowUpWorkflowTest extends TestCase
         }
 
         return $this->withHeader('Authorization', "Bearer {$token}");
+    }
+
+    private function assertDocxUsesRepeatingPageChrome(ZipArchive $zip, string $reference): void
+    {
+        $documentXml = $zip->getFromName('word/document.xml');
+        $relationshipsXml = $zip->getFromName('word/_rels/document.xml.rels');
+
+        $this->assertIsString($documentXml);
+        $this->assertIsString($relationshipsXml);
+        $this->assertStringContainsString('<w:headerReference', $documentXml);
+        $this->assertStringContainsString('<w:footerReference', $documentXml);
+
+        preg_match(
+            '/<Relationship\b(?=[^>]*Type="[^"]*\/header")(?=[^>]*Target="([^"]+)")[^>]*\/>/',
+            $relationshipsXml,
+            $headerRelationship,
+        );
+        preg_match(
+            '/<Relationship\b(?=[^>]*Type="[^"]*\/footer")(?=[^>]*Target="([^"]+)")[^>]*\/>/',
+            $relationshipsXml,
+            $footerRelationship,
+        );
+
+        $this->assertNotEmpty($headerRelationship[1] ?? null, 'DOCX must relate its document to a header XML part.');
+        $this->assertNotEmpty($footerRelationship[1] ?? null, 'DOCX must relate its document to a footer XML part.');
+
+        $headerXml = $zip->getFromName('word/'.$headerRelationship[1]);
+        $footerXml = $zip->getFromName('word/'.$footerRelationship[1]);
+
+        $this->assertIsString($headerXml);
+        $this->assertIsString($footerXml);
+        $this->assertStringContainsString('Ref: '.$reference, $headerXml);
+        $this->assertStringContainsString('<v:imagedata', $headerXml);
+        $this->assertStringContainsString('<v:imagedata', $footerXml);
+        $this->assertStringContainsString('Page ', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>PAGE<\/w:instrText>/', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>NUMPAGES<\/w:instrText>/', $footerXml);
+        $this->assertStringNotContainsString('riyada', strtolower($documentXml.$relationshipsXml.$headerXml.$footerXml));
     }
 }

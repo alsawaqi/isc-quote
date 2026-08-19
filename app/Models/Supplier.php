@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Supplier extends Model
 {
@@ -30,5 +31,10 @@ class Supplier extends Model
     public function manufacturer(): BelongsTo
     {
         return $this->belongsTo(Manufacturer::class);
+    }
+
+    public function manufacturers(): BelongsToMany
+    {
+        return $this->belongsToMany(Manufacturer::class, 'supplier_manufacturer')->withTimestamps();
     }
 }

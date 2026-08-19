@@ -17,6 +17,8 @@ use PhpOffice\PhpWord\SimpleType\JcTable;
 
 class PackingListDocumentService
 {
+    public function __construct(private readonly DocumentPageLayout $pageLayout) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -76,35 +78,23 @@ class PackingListDocumentService
         Settings::setOutputEscapingEnabled(true);
 
         $phpWord = new PhpWord;
-        $phpWord->setDefaultFontName('Arial');
-        $phpWord->setDefaultFontSize(9);
-        $phpWord->addTableStyle('InfoTable', [
-            'borderColor' => 'BFBFBF',
-            'borderSize' => 6,
-            'cellMargin' => 120,
-            'alignment' => JcTable::CENTER,
-        ]);
-        $phpWord->addTableStyle('ItemsTable', [
-            'borderColor' => '8EA9DB',
-            'borderSize' => 6,
-            'cellMargin' => 100,
-            'alignment' => JcTable::CENTER,
-        ], [
+        $phpWord->setDefaultFontName('Calibri');
+        $phpWord->setDefaultFontSize(10);
+        $phpWord->addTableStyle('InfoTable', $this->pageLayout->tableStyle('BFBFBF', 120));
+        $phpWord->addTableStyle('ItemsTable', $this->pageLayout->tableStyle('8EA9DB', 100), [
             'bgColor' => 'D9D9D9',
         ]);
 
-        $section = $phpWord->addSection([
-            'marginTop' => 450,
-            'marginBottom' => 450,
-            'marginLeft' => 600,
-            'marginRight' => 600,
-        ]);
+        $section = $this->pageLayout->addWordSection(
+            $phpWord,
+            (string) $snapshot['packing_list']['reference'],
+            $snapshot['supplier']['vat_tin'] ?? $snapshot['buyer']['vat_tin'] ?? null,
+        );
 
-        $this->addImageIfExists($section, 'quotation-assets/isc-header.jpeg', 742, null);
-        $section->addText('Packing List', ['bold' => true, 'size' => 15, 'color' => '1F4E79'], ['alignment' => Jc::CENTER, 'spaceAfter' => 120]);
+        $section->addText('Packing List', ['bold' => true, 'size' => 16, 'color' => '1F4E79'], ['alignment' => Jc::CENTER, 'spaceAfter' => 120]);
 
         $refTable = $section->addTable('InfoTable');
-        $refTable->addRow();
+        $this->pageLayout->addWordSummaryRow($refTable);
         $refTable->addCell(4700)->addText('Ref: '.$snapshot['packing_list']['reference'], ['bold' => true]);
         $refTable->addCell(4700)->addText('Dated: '.$snapshot['packing_list']['dated'], ['bold' => true]);
 
@@ -115,9 +105,15 @@ class PackingListDocumentService
 
         $section->addTextBreak(1);
         $itemsTable = $section->addTable('ItemsTable');
-        $itemsTable->addRow();
-        foreach (['SL No', 'Item Description', 'Qty', 'Size', 'Gross / Net KG'] as $heading) {
-            $itemsTable->addCell($heading === 'Item Description' ? 5100 : 1250, ['bgColor' => 'D9D9D9', 'valign' => 'center'])
+        $this->pageLayout->addWordTableHeader($itemsTable);
+        foreach ([
+            'SL No' => 850,
+            'Item Description' => 5100,
+            'Qty' => 950,
+            'Size' => 1550,
+            'Gross / Net KG' => 1450,
+        ] as $heading => $width) {
+            $itemsTable->addCell($width, ['bgColor' => 'D9D9D9', 'valign' => 'center'])
                 ->addText($heading, ['bold' => true], ['alignment' => Jc::CENTER]);
         }
 
@@ -140,8 +136,6 @@ class PackingListDocumentService
             $section->addText('Remarks: '.$snapshot['packing_list']['remarks'], ['italic' => true]);
         }
 
-        $this->addImageIfExists($section, 'quotation-assets/isc-footer.jpeg', 742, null);
-
         IOFactory::createWriter($phpWord, 'Word2007')->save(Storage::disk('local')->path($storagePath));
     }
 
@@ -151,23 +145,33 @@ class PackingListDocumentService
     public function writePdf(array $snapshot, string $storagePath): void
     {
         Storage::disk('local')->makeDirectory(dirname($storagePath));
+        $pdfSnapshot = $this->pageLayout->preparePdfSnapshot($snapshot);
 
         $dompdf = new Dompdf([
             'isRemoteEnabled' => false,
             'isHtml5ParserEnabled' => true,
         ]);
         $dompdf->loadHtml(view('packing-lists.document', [
-            'snapshot' => $snapshot,
+            'snapshot' => $pdfSnapshot,
+            'assets' => [
+                'header' => $this->assetDataUri('quotation-assets/isc-header.jpeg'),
+                'footer' => $this->assetDataUri('quotation-assets/isc-footer.jpeg'),
+            ],
         ])->render());
         $dompdf->setPaper('A4');
         $dompdf->render();
+        $this->pageLayout->addPdfPageChrome(
+            $dompdf,
+            (string) $snapshot['packing_list']['reference'],
+            $snapshot['supplier']['vat_tin'] ?? $snapshot['buyer']['vat_tin'] ?? null,
+        );
 
         Storage::disk('local')->put($storagePath, $dompdf->output());
     }
 
     private function addInfoRow($table, string $leftTitle, array $leftLines, string $rightTitle, array $rightLines): void
     {
-        $table->addRow();
+        $table->addRow(null, ['cantSplit' => true]);
         $left = $table->addCell(4700);
         $right = $table->addCell(4700);
         $left->addText($leftTitle, ['bold' => true, 'color' => '1F4E79']);
@@ -190,6 +194,7 @@ class PackingListDocumentService
             'location' => $company?->location,
             'postal_code' => $company?->postal_code,
             'country' => $company?->country?->name,
+            'vat_tin' => $company?->vat_tin,
         ];
     }
 
@@ -249,7 +254,9 @@ class PackingListDocumentService
 
     private function addImageIfExists($section, string $storagePath, ?int $width = null, ?int $height = null): void
     {
-        if (! Storage::disk('local')->exists($storagePath)) {
+        $assetPath = DocumentBrandingAssets::path($storagePath);
+
+        if ($assetPath === null) {
             return;
         }
 
@@ -259,6 +266,11 @@ class PackingListDocumentService
             'alignment' => Jc::CENTER,
         ]);
 
-        $section->addImage(Storage::disk('local')->path($storagePath), $options);
+        $section->addImage($assetPath, $options);
+    }
+
+    private function assetDataUri(string $storagePath): ?string
+    {
+        return DocumentBrandingAssets::dataUri($storagePath);
     }
 }

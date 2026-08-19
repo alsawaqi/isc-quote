@@ -17,6 +17,9 @@ const FollowUpGroupView = () => import('./components/FollowUpGroupView.vue');
 const FollowUpQuotationView = () => import('./components/FollowUpQuotationView.vue');
 const FollowUpVisualizationView = () => import('./components/FollowUpVisualizationView.vue');
 const FollowUpDetailView = () => import('./components/FollowUpDetailView.vue');
+const CompanyDirectoryView = () => import('./components/CompanyDirectoryView.vue');
+const CompanyWizardView = () => import('./components/CompanyWizardView.vue');
+const CompanyProfileView = () => import('./components/CompanyProfileView.vue');
 
 declare module 'vue-router' {
     interface RouteMeta {
@@ -70,13 +73,54 @@ const routes: RouteRecordRaw[] = [
     },
     moduleRoute('/countries', 'countries', 'Countries', adminRoles, resourcePermissions('countries')),
     moduleRoute('/designations', 'designations', 'Designations', adminRoles, resourcePermissions('designations')),
-    moduleRoute('/companies', 'companies', 'Companies', adminRoles, resourcePermissions('companies')),
-    moduleRoute('/contacts', 'contacts', 'Contacts', adminRoles, resourcePermissions('contacts')),
+    {
+        path: '/companies',
+        name: 'companies',
+        component: CompanyDirectoryView,
+        meta: {
+            requiresAuth: true,
+            roles: adminRoles,
+            permissions: resourcePermissions('companies'),
+            title: 'Companies',
+        },
+    },
+    {
+        path: '/companies/create',
+        name: 'companies-create',
+        component: CompanyWizardView,
+        meta: {
+            requiresAuth: true,
+            roles: adminRoles,
+            permissions: ['create-companies'],
+            title: 'Create Company',
+        },
+    },
+    {
+        path: '/companies/:id',
+        name: 'companies-profile',
+        component: CompanyProfileView,
+        meta: {
+            requiresAuth: true,
+            roles: adminRoles,
+            permissions: ['view-companies', 'update-companies'],
+            title: 'Company Profile',
+        },
+    },
+    {
+        path: '/companies/:id/edit',
+        name: 'companies-edit',
+        component: CompanyWizardView,
+        meta: {
+            requiresAuth: true,
+            roles: adminRoles,
+            permissions: ['update-companies'],
+            title: 'Update Company',
+        },
+    },
     moduleRoute('/incoterms', 'incoterms', 'Incoterms', adminRoles, resourcePermissions('incoterms')),
     moduleRoute('/uoms', 'uoms', 'UOMs', adminRoles, resourcePermissions('uoms')),
     moduleRoute('/currencies', 'currencies', 'Currencies', adminRoles, resourcePermissions('currencies')),
     moduleRoute('/manufacturers', 'manufacturers', 'Manufacturers', adminRoles, resourcePermissions('manufacturers')),
-    moduleRoute('/suppliers', 'suppliers', 'Suppliers', adminRoles, resourcePermissions('suppliers')),
     moduleRoute('/users-roles', 'users-roles', 'Users & Roles', adminRoles, ['manage-users', 'manage-roles']),
     {
         path: '/admin/trace/quotations',

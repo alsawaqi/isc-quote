@@ -33,7 +33,7 @@ import type { RoleSlug, User } from '../types';
 
 interface NotificationItem {
     id: number;
-    type: 'overdue' | 'due_today';
+    type: 'overdue' | 'due_today' | 'payment_overdue' | 'payment_due_today';
     title: string;
     body: string;
     stage_label: string;

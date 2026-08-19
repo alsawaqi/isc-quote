@@ -13,6 +13,8 @@ class Invoice extends Model
 
     protected $fillable = [
         'follow_up_item_id',
+        'quotation_id',
+        'buyer_po_id',
         'delivery_order_id',
         'invoice_reference',
         'invoice_date',
@@ -52,6 +54,16 @@ class Invoice extends Model
     public function followUpItem(): BelongsTo
     {
         return $this->belongsTo(FollowUpItem::class);
+    }
+
+    public function quotation(): BelongsTo
+    {
+        return $this->belongsTo(Quotation::class);
+    }
+
+    public function buyerPo(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPo::class);
     }
 
     public function deliveryOrder(): BelongsTo

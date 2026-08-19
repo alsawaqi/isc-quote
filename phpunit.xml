@@ -26,6 +26,8 @@
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
+        <env name="FILESYSTEM_LOCAL_DIRECTORY" value="framework/testing/disks/local" force="true"/>
+        <env name="VIEW_COMPILED_PATH" value="storage/framework/testing/views"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

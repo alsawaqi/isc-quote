@@ -14,6 +14,8 @@ class PackingListItem extends Model
         'packing_list_id',
         'quotation_item_id',
         'buyer_po_id',
+        'buyer_po_item_id',
+        'item_fulfilment_id',
         'line_number',
         'item_description',
         'quantity',
@@ -44,5 +46,15 @@ class PackingListItem extends Model
     public function buyerPo(): BelongsTo
     {
         return $this->belongsTo(BuyerPo::class);
+    }
+
+    public function buyerPoItem(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPoItem::class);
+    }
+
+    public function itemFulfilment(): BelongsTo
+    {
+        return $this->belongsTo(ItemFulfilment::class);
     }
 }

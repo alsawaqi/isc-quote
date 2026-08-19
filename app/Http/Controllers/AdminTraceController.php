@@ -335,6 +335,7 @@ class AdminTraceController extends Controller
             "{$prefix}quotation.buyerContact",
             "{$prefix}quotation.salesperson",
             "{$prefix}quotation.buyerPos.quotationVersion",
+            "{$prefix}buyerPoItems.buyerPo",
             "{$prefix}supplierPoLines.buyerPo",
             "{$prefix}supplierPoLines.supplierPo.supplierCompany",
             "{$prefix}supplierPoLines.supplierPo.supplierContact",
@@ -409,13 +410,19 @@ class AdminTraceController extends Controller
     {
         return [
             'buyer_id' => Company::query()
-                ->whereIn('company_type', ['buyer', 'mixed'])
+                ->where('status', 'active')
+                ->where(function (Builder $query): void {
+                    $query->whereHas('buyerProfile', fn (Builder $profile) => $profile->where('status', 'active'))
+                        ->orWhereIn('company_type', ['buyer', 'mixed']);
+                })
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn (Company $company): array => ['value' => (string) $company->id, 'label' => $company->name])
                 ->values(),
             'supplier_id' => Supplier::query()
                 ->with('company')
+                ->where('status', 'active')
+                ->whereHas('company', fn (Builder $company) => $company->where('status', 'active'))
                 ->orderBy('id')
                 ->get()
                 ->map(fn (Supplier $supplier): array => ['value' => (string) $supplier->id, 'label' => $supplier->company?->name ?? "Supplier {$supplier->id}"])
@@ -524,7 +531,8 @@ class AdminTraceController extends Controller
     {
         $line = $item->supplierPoLines->first();
         $followUpItem = $line?->followUpItem;
-        $buyerPo = $line?->buyerPo ?? $item->quotation?->buyerPos?->first();
+        $buyerPoItem = $item->buyerPoItems->first();
+        $buyerPo = $line?->buyerPo ?? $buyerPoItem?->buyerPo ?? $item->quotation?->buyerPos?->first();
         $status = $followUpItem?->status ?? $item->quotation?->status ?? 'draft';
         $comments = $followUpItem && $followUpItem->relationLoaded('comments')
             ? $followUpItem->comments->map(fn (FollowUpComment $comment): array => $this->transformComment($comment))->values()
@@ -548,6 +556,7 @@ class AdminTraceController extends Controller
             'assigned_to_name' => $followUpItem?->assignee?->name,
             'manufacturer_id' => $item->manufacturer_id,
             'manufacturer_name' => $item->manufacturer?->name,
+            'product_code' => $line?->product_code ?? $item->product_code,
             'product_name' => $line?->product_name ?? $item->product_name,
             'title' => $line?->title ?? $item->title,
             'buyer_description' => $item->buyer_description,

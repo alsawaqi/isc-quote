@@ -13,6 +13,8 @@ class DeliveryOrder extends Model
 
     protected $fillable = [
         'follow_up_item_id',
+        'quotation_id',
+        'buyer_po_id',
         'delivery_order_reference',
         'delivery_order_date',
         'delivery_place',
@@ -37,6 +39,16 @@ class DeliveryOrder extends Model
     public function followUpItem(): BelongsTo
     {
         return $this->belongsTo(FollowUpItem::class);
+    }
+
+    public function quotation(): BelongsTo
+    {
+        return $this->belongsTo(Quotation::class);
+    }
+
+    public function buyerPo(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPo::class);
     }
 
     public function creator(): BelongsTo

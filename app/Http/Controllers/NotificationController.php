@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\FollowUpItem;
+use App\Models\PaymentPlanFollowUp;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -61,8 +62,34 @@ class NotificationController extends Controller
             ->limit(12)
             ->get();
 
-        $notifications = $items
+        $followUpNotifications = collect($items
             ->map(fn (FollowUpItem $item): array => $this->transformNotification($item, $todayStart))
+            ->values()
+            ->all());
+
+        $paymentPlanNotifications = collect($this->visiblePaymentPlanFollowUps($request)
+            ->with([
+                'followUpItem.supplierPo.supplierCompany',
+                'followUpItem.quotation.buyerCompany',
+                'followUpItem.buyerPo',
+                'followUpItem.supplierPoLine.manufacturer',
+                'followUpItem.quotationItem.manufacturer',
+                'quotationPaymentSchedule',
+            ])
+            ->where('status', 'pending')
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<=', $todayEnd)
+            ->orderBy('due_date')
+            ->limit(12)
+            ->get()
+            ->map(fn (PaymentPlanFollowUp $paymentPlanFollowUp): array => $this->transformPaymentPlanNotification($paymentPlanFollowUp, $todayStart))
+            ->values()
+            ->all());
+
+        $notifications = $followUpNotifications
+            ->merge($paymentPlanNotifications)
+            ->sortBy('due_at')
+            ->take(12)
             ->values()
             ->all();
 
@@ -81,6 +108,18 @@ class NotificationController extends Controller
         }
 
         return $query;
+    }
+
+    private function visiblePaymentPlanFollowUps(Request $request): Builder
+    {
+        return PaymentPlanFollowUp::query()
+            ->whereHas('followUpItem', function (Builder $query) use ($request): void {
+                $query->whereNotIn('status', self::CLOSED_STATUSES);
+
+                if (! $request->user()?->hasRole('admin')) {
+                    $query->where('assigned_to', $request->user()?->id);
+                }
+            });
     }
 
     /**
@@ -111,6 +150,40 @@ class NotificationController extends Controller
             'supplier_company_name' => $item->supplierPo?->supplierCompany?->name,
             'due_at' => $dueAt?->toDateTimeString(),
             'action_url' => "/follow-up/{$item->id}",
+            'severity' => $isOverdue ? 'danger' : 'warning',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transformPaymentPlanNotification(PaymentPlanFollowUp $paymentPlanFollowUp, Carbon $todayStart): array
+    {
+        $paymentPlanFollowUp->loadMissing(['followUpItem.quotation.buyerCompany', 'followUpItem.supplierPo.supplierCompany', 'followUpItem.buyerPo', 'followUpItem.supplierPoLine', 'followUpItem.quotationItem', 'quotationPaymentSchedule']);
+        $item = $paymentPlanFollowUp->followUpItem;
+        $dueAt = $paymentPlanFollowUp->due_date?->copy()->startOfDay();
+        $isOverdue = $dueAt && $dueAt->lt($todayStart);
+        $schedule = $paymentPlanFollowUp->quotationPaymentSchedule;
+        $product = $item?->supplierPoLine?->title
+            ?? $item?->quotationItem?->title
+            ?? $item?->supplierPoLine?->product_name
+            ?? $item?->quotationItem?->product_name
+            ?? 'Payment plan';
+        $amount = trim(($paymentPlanFollowUp->currency ?? '').' '.number_format((float) ($paymentPlanFollowUp->expected_amount ?? 0), 3, '.', ''));
+
+        return [
+            'id' => $paymentPlanFollowUp->id,
+            'type' => $isOverdue ? 'payment_overdue' : 'payment_due_today',
+            'title' => $isOverdue ? 'Payment Plan Overdue' : 'Payment Plan Due Today',
+            'body' => trim(($schedule?->label ?? 'Payment').' '.$amount.' - '.$product.' - '.($item?->quotation?->buyerCompany?->name ?? 'No buyer')),
+            'stage_label' => 'Payment / Close',
+            'status_label' => 'Pending Payment Plan',
+            'supplier_po_reference' => $item?->supplierPo?->po_reference,
+            'buyer_po_number' => $item?->buyerPo?->po_number,
+            'buyer_company_name' => $item?->quotation?->buyerCompany?->name,
+            'supplier_company_name' => $item?->supplierPo?->supplierCompany?->name,
+            'due_at' => $dueAt?->toDateTimeString(),
+            'action_url' => $item ? "/follow-up/{$item->id}" : '/follow-up',
             'severity' => $isOverdue ? 'danger' : 'warning',
         ];
     }

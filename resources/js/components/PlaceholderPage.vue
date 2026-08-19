@@ -254,6 +254,7 @@ const resourcePages: Record<string, ResourceConfig> = {
             { key: 'id', label: 'ID' },
             { key: 'code', label: 'Code' },
             { key: 'name', label: 'Name' },
+            { key: 'symbol', label: 'Symbol' },
             { key: 'exchange_rate', label: 'Exchange Rate' },
             { key: 'status', label: 'Status' },
             { key: 'created_at', label: 'Created At' },
@@ -262,6 +263,7 @@ const resourcePages: Record<string, ResourceConfig> = {
         fields: [
             { key: 'code', label: 'Code', required: true },
             { key: 'name', label: 'Name', required: true },
+            { key: 'symbol', label: 'Symbol' },
             { key: 'exchange_rate', label: 'Exchange Rate', type: 'number', required: true, step: '0.000001' },
             { key: 'status', label: 'Status', type: 'select', optionsKey: 'statuses', required: true },
         ],

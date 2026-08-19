@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\MasterDataController;
 use App\Http\Controllers\AdminTraceController;
 use App\Http\Controllers\AuthSessionController;
+use App\Http\Controllers\CompanyManagementController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\FollowUpController;
 use App\Http\Controllers\NotificationController;
@@ -11,7 +12,7 @@ use App\Http\Controllers\SupplierPoController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthSessionController::class, 'store']);
-Route::post('/token/refresh', [AuthSessionController::class, 'refresh']);
+Route::post('/token/refresh', [AuthSessionController::class, 'refresh'])->middleware('throttle:token-refresh');
 Route::post('/logout', [AuthSessionController::class, 'destroy']);
 
 Route::middleware('jwt.auth')->group(function (): void {
@@ -20,15 +21,24 @@ Route::middleware('jwt.auth')->group(function (): void {
     Route::get('/dashboard', [DashboardController::class, 'show']);
     Route::get('/notifications', [NotificationController::class, 'index']);
 
+    Route::get('/company-management/options', [CompanyManagementController::class, 'options']);
+    Route::get('/company-management', [CompanyManagementController::class, 'index']);
+    Route::post('/company-management', [CompanyManagementController::class, 'store']);
+    Route::get('/company-management/{company}', [CompanyManagementController::class, 'show']);
+    Route::put('/company-management/{company}', [CompanyManagementController::class, 'update']);
+
     Route::get('/quotations', [QuotationController::class, 'index']);
     Route::get('/quotations/create-options', [QuotationController::class, 'createOptions']);
     Route::get('/quotations/{quotation}', [QuotationController::class, 'show']);
     Route::post('/quotations', [QuotationController::class, 'store']);
     Route::put('/quotations/{quotation}', [QuotationController::class, 'update']);
+    Route::post('/quotations/{quotation}/payment-schedule', [QuotationController::class, 'storePaymentSchedule']);
     Route::post('/quotations/{quotation}/items', [QuotationController::class, 'storeItems']);
     Route::post('/quotations/{quotation}/terms', [QuotationController::class, 'storeTerms']);
     Route::post('/quotations/{quotation}/finalize', [QuotationController::class, 'finalize']);
     Route::post('/quotations/{quotation}/buyer-po', [QuotationController::class, 'storeBuyerPo']);
+    Route::get('/quotations/{quotation}/buyer-po/{buyerPo}/download', [QuotationController::class, 'downloadBuyerPoUpload']);
+    Route::get('/quotations/{quotation}/versions/{versionNumber}/download/{documentType}/{format}', [QuotationController::class, 'downloadVersionType']);
     Route::get('/quotations/{quotation}/versions/{versionNumber}/download/{format}', [QuotationController::class, 'downloadVersion']);
 
     Route::get('/supplier-pos', [SupplierPoController::class, 'index']);
@@ -36,6 +46,7 @@ Route::middleware('jwt.auth')->group(function (): void {
     Route::post('/supplier-pos', [SupplierPoController::class, 'store']);
     Route::get('/supplier-pos/{supplierPo}', [SupplierPoController::class, 'show']);
     Route::put('/supplier-pos/{supplierPo}', [SupplierPoController::class, 'update']);
+    Route::get('/supplier-pos/{supplierPo}/revisions/{revisionNumber}/download/{format}', [SupplierPoController::class, 'downloadRevision']);
     Route::get('/supplier-pos/{supplierPo}/download/{format}', [SupplierPoController::class, 'download']);
 
     Route::get('/follow-up', [FollowUpController::class, 'index']);
@@ -43,13 +54,16 @@ Route::middleware('jwt.auth')->group(function (): void {
     Route::get('/follow-up/quotations/{quotation}', [FollowUpController::class, 'quotationShow']);
     Route::post('/follow-up/quotations/{quotation}/groups', [FollowUpController::class, 'storeQuotationGroup']);
     Route::delete('/follow-up/quotations/{quotation}/groups/{groupKey}', [FollowUpController::class, 'splitQuotationGroup']);
+    Route::post('/follow-up/quotations/{quotation}/bulk-action', [FollowUpController::class, 'bulkQuotationAction']);
     Route::get('/follow-up/{followUpItem}', [FollowUpController::class, 'show']);
     Route::put('/follow-up/{followUpItem}/reminder', [FollowUpController::class, 'updateReminder']);
     Route::post('/follow-up/{followUpItem}/comments', [FollowUpController::class, 'storeComment']);
     Route::post('/follow-up/{followUpItem}/acknowledgement', [FollowUpController::class, 'acknowledge']);
+    Route::get('/follow-up/{followUpItem}/acknowledgement/download', [FollowUpController::class, 'downloadAcknowledgementUpload']);
     Route::get('/follow-up/{followUpItem}/shipping-documents', [FollowUpController::class, 'shippingDocuments']);
     Route::post('/follow-up/{followUpItem}/shipping-documents/complete', [FollowUpController::class, 'completeShippingDocuments']);
     Route::post('/follow-up/{followUpItem}/shipping-documents/{documentType}', [FollowUpController::class, 'uploadShippingDocument']);
+    Route::get('/follow-up/{followUpItem}/shipping-documents/{shippingDocument}/download', [FollowUpController::class, 'downloadShippingDocumentUpload']);
     Route::post('/follow-up/{followUpItem}/packing-list', [FollowUpController::class, 'storePackingList']);
     Route::get('/follow-up/{followUpItem}/logistics', [FollowUpController::class, 'logistics']);
     Route::post('/follow-up/{followUpItem}/logistics/eta', [FollowUpController::class, 'recordEta']);
@@ -58,10 +72,16 @@ Route::middleware('jwt.auth')->group(function (): void {
     Route::post('/follow-up/{followUpItem}/logistics/warehouse-received', [FollowUpController::class, 'markWarehouseReceived']);
     Route::post('/follow-up/{followUpItem}/logistics/buyer-received', [FollowUpController::class, 'markBuyerReceived']);
     Route::post('/follow-up/{followUpItem}/delivery-order', [FollowUpController::class, 'storeDeliveryOrder']);
+    Route::post('/follow-up/{followUpItem}/delivery-orders/{deliveryOrder}/signed', [FollowUpController::class, 'uploadSpecificSignedDeliveryOrder']);
+    Route::get('/follow-up/{followUpItem}/delivery-orders/{deliveryOrder}/signed/download', [FollowUpController::class, 'downloadSpecificSignedDeliveryOrderUpload']);
     Route::post('/follow-up/{followUpItem}/delivery-order/signed', [FollowUpController::class, 'uploadSignedDeliveryOrder']);
+    Route::get('/follow-up/{followUpItem}/delivery-order/signed/download', [FollowUpController::class, 'downloadSignedDeliveryOrderUpload']);
     Route::post('/follow-up/{followUpItem}/invoice', [FollowUpController::class, 'storeInvoice']);
     Route::post('/follow-up/{followUpItem}/invoice/sent', [FollowUpController::class, 'markInvoiceSent']);
     Route::post('/follow-up/{followUpItem}/payments', [FollowUpController::class, 'storePayment']);
+    Route::post('/follow-up/{followUpItem}/payment-plan/{paymentPlanFollowUp}/paid', [FollowUpController::class, 'markPaymentPlanFollowUpPaid']);
+    Route::post('/follow-up/{followUpItem}/payment-plan/{paymentPlanFollowUp}/attachments', [FollowUpController::class, 'storePaymentPlanFollowUpAttachment']);
+    Route::get('/follow-up/{followUpItem}/payment-plan/{paymentPlanFollowUp}/attachments/{paymentPlanFollowUpAttachment}/download', [FollowUpController::class, 'downloadPaymentPlanFollowUpAttachment']);
     Route::post('/follow-up/{followUpItem}/close', [FollowUpController::class, 'closeFollowUpItem']);
     Route::put('/follow-up/{followUpItem}/assignment', [FollowUpController::class, 'assign']);
     Route::get('/packing-lists/{packingList}/download/{format}', [FollowUpController::class, 'downloadPackingList']);

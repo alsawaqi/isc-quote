@@ -17,6 +17,7 @@ import { humanizeStatus } from '../utils/format';
 interface SupplierPoRecord {
     id: number;
     po_reference: string;
+    revision_number: number;
     supplier_company_name: string | null;
     supplier_contact_name: string | null;
     buyer_company_name: string | null;
@@ -57,6 +58,7 @@ const filteredSupplierPos = computed(() => {
             supplierPo.buyer_company_name,
             supplierPo.buyer_contact_name,
             supplierPo.incoterm_code,
+            supplierPo.revision_number,
             supplierPo.status,
         ]
             .filter(Boolean)
@@ -98,7 +100,8 @@ async function loadSupplierPos(): Promise<void> {
 
 async function downloadDocument(supplierPo: SupplierPoRecord, format: 'docx' | 'pdf'): Promise<void> {
     try {
-        await downloadProtectedFile(supplierPo.downloads[format], `${supplierPo.po_reference}.${format}`);
+        const filename = `${supplierPo.po_reference}-REV-${supplierPo.revision_number}.${format}`.toUpperCase();
+        await downloadProtectedFile(supplierPo.downloads[format], filename);
     } catch (error) {
         showToast('error', error instanceof Error ? error.message : 'Unable to download supplier PO.');
     }
@@ -181,7 +184,10 @@ onMounted(loadSupplierPos);
                 <div v-else-if="filteredSupplierPos.length === 0" class="crud-empty">No supplier POs found.</div>
 
                 <div v-for="supplierPo in filteredSupplierPos" v-else :key="supplierPo.id" class="module-record supplier-po-row">
-                    <strong class="job-ref">{{ supplierPo.po_reference }}</strong>
+                    <span>
+                        <strong class="job-ref">{{ supplierPo.po_reference }}</strong>
+                        <small>Rev {{ supplierPo.revision_number }}</small>
+                    </span>
                     <span>{{ supplierPo.supplier_company_name ?? '-' }}</span>
                     <span>{{ supplierPo.supplier_contact_name ?? '-' }}</span>
                     <span>{{ supplierPo.buyer_company_name ?? '-' }}</span>

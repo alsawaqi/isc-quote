@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <style>
-        @page { margin: 22px 30px 24px; }
+        @include('documents.partials.page-chrome-css')
 
         body {
             color: #111827;
@@ -11,9 +11,6 @@
             font-size: 10px;
             line-height: 1.35;
         }
-
-        .brand-image,
-        .footer-image { width: 100%; }
 
         .title {
             color: #1f4e79;
@@ -46,7 +43,7 @@
         }
 
         .ref-table { margin-bottom: 8px; }
-        .ref-table td { font-weight: 700; width: 50%; }
+        .ref-table td { font-weight: 700; width: 33.333%; }
 
         .items-table { margin-top: 12px; }
         .items-table th {
@@ -72,6 +69,15 @@
             font-style: italic;
             margin-top: 5px;
         }
+
+        .item-meta-line,
+        .origin-line {
+            color: #667085;
+            font-size: 8px;
+            margin-top: 4px;
+        }
+
+        .item-meta-line { font-style: italic; }
 
         .total-label {
             font-weight: 700;
@@ -108,18 +114,16 @@
             margin: 12px 0 8px;
             text-align: center;
         }
+
     </style>
 </head>
 <body>
-    @if($assets['header'])
-        <img class="brand-image" src="{{ $assets['header'] }}" alt="Industrial Supplies Center">
-    @endif
-
     <div class="title">Purchase Order</div>
 
     <table class="ref-table">
         <tr>
             <td>Ref: {{ $snapshot['po']['reference'] }}</td>
+            <td>Revision: {{ $snapshot['po']['revision_number'] }}</td>
             <td>Dated: {{ $snapshot['po']['dated'] }}</td>
         </tr>
     </table>
@@ -131,6 +135,12 @@
                 {{ $snapshot['supplier']['name'] ?? '' }}<br>
                 {{ $snapshot['supplier']['address'] ?? '' }}<br>
                 {{ $snapshot['supplier']['location'] ?? '' }}
+                @if($snapshot['factory'] ?? null)
+                    <br><strong>Factory:</strong> {{ $snapshot['factory']['name'] ?? '' }}
+                    @if($snapshot['factory']['address'] ?? null)<br>{{ $snapshot['factory']['address'] }}@endif
+                    @if($snapshot['factory']['location'] ?? null)<br>{{ $snapshot['factory']['location'] }}@endif
+                    @if($snapshot['factory']['manufacturer'] ?? null)<br>Manufacturer: {{ $snapshot['factory']['manufacturer'] }}@endif
+                @endif
             </td>
             <td>
                 <span class="section-label">BUYER</span>
@@ -168,7 +178,8 @@
         <thead>
             <tr>
                 <th style="width: 8%;">SL No</th>
-                <th style="width: 54%;">Item Description</th>
+                <th style="width: 13%;">Material / Item Code</th>
+                <th style="width: 41%;">Item Description</th>
                 <th style="width: 10%;">Qty</th>
                 <th style="width: 14%;">Unit Price</th>
                 <th style="width: 14%;">Total excl. VAT</th>
@@ -176,26 +187,55 @@
         </thead>
         <tbody>
             @foreach($snapshot['items'] as $item)
-                <tr>
-                    <td>{{ $item['line_number'] }}</td>
-                    <td>
-                        <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
-                        {!! nl2br(e($item['description'])) !!}
-                        <div class="trace-line">Buyer PO: {{ $item['buyer_po_number'] }} | Quotation: {{ $item['quotation_reference'] }}</div>
-                    </td>
-                    <td>{{ $item['quantity'] }} {{ $item['uom'] }}</td>
-                    <td>{{ $item['unit_cost'] }}</td>
-                    <td>{{ $item['total_cost'] }}</td>
-                </tr>
+                @foreach(($item['pdf_description_chunks'] ?? [(string) $item['description']]) as $chunkIndex => $descriptionChunk)
+                    <tr @class(['item-continuation' => $chunkIndex > 0])>
+                        <td>{{ $chunkIndex === 0 ? $item['line_number'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? ($item['product_code'] ?? '-') : '' }}</td>
+                        <td>
+                            @if($chunkIndex === 0)
+                                <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
+                            @endif
+                            {!! nl2br(e($descriptionChunk)) !!}
+                            @if($chunkIndex === 0)
+                                @php
+                                    $itemMeta = array_filter([
+                                        $item['factory_label'] ?? null,
+                                        ! empty($item['delivery_date']) ? 'Delivery Date: '.$item['delivery_date'] : null,
+                                        ! empty($item['incoterm']) ? 'Incoterm: '.$item['incoterm'] : null,
+                                    ]);
+                                @endphp
+                                @if($itemMeta)
+                                    <div class="item-meta-line">{{ implode(' | ', $itemMeta) }}</div>
+                                @endif
+                                @foreach(($item['origins'] ?? []) as $origin)
+                                    @php
+                                        $originParts = array_filter([
+                                            $origin['country'] ?? null,
+                                            ! empty($origin['amount']) ? 'Amount: '.$origin['amount'] : null,
+                                            ! empty($origin['location']) ? 'Location: '.$origin['location'] : null,
+                                        ]);
+                                    @endphp
+                                    @if($originParts)
+                                        <div class="origin-line">Country of Origin: {{ implode(' | ', $originParts) }}</div>
+                                    @endif
+                                @endforeach
+                                <div class="trace-line">Buyer PO: {{ $item['buyer_po_number'] }} | Quotation: {{ $item['quotation_reference'] }}</div>
+                            @endif
+                        </td>
+                        <td>{{ $chunkIndex === 0 ? $item['quantity'].' '.$item['uom'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? $item['unit_cost'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? $item['total_cost'] : '' }}</td>
+                    </tr>
+                @endforeach
             @endforeach
             @if((float) $snapshot['po']['additional_charges'] > 0)
                 <tr>
-                    <td colspan="4" class="total-label">{{ $snapshot['po']['additional_charges_label'] ?: 'Additional Charges' }}:</td>
+                    <td colspan="5" class="total-label">{{ $snapshot['po']['additional_charges_label'] ?: 'Additional Charges' }}:</td>
                     <td>{{ $snapshot['po']['additional_charges'] }}</td>
                 </tr>
             @endif
             <tr>
-                <td colspan="4" class="total-label">Total Net Amount (VAT Exclusive) {{ $snapshot['po']['currency'] }}:</td>
+                <td colspan="5" class="total-label">Total Net Amount (VAT Exclusive) {{ $snapshot['po']['currency'] }}:</td>
                 <td>{{ $snapshot['totals']['total'] }}</td>
             </tr>
         </tbody>
@@ -204,7 +244,7 @@
     <div class="terms-title">Terms and Conditions</div>
     @foreach($snapshot['terms'] as $term)
         <div class="term">
-            <strong>{{ $term['title'] }}:</strong>
+            <strong>{{ $term['line_number'] ?? $loop->iteration }}. {{ $term['title'] }}:</strong>
             {{ $term['description'] }}
         </div>
     @endforeach
@@ -223,9 +263,5 @@
     </table>
 
     <div class="signoff">Industrial Supplies Center LLC.</div>
-
-    @if($assets['footer'])
-        <img class="footer-image" src="{{ $assets['footer'] }}" alt="ISC contact details">
-    @endif
 </body>
 </html>

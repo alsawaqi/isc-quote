@@ -14,6 +14,8 @@ class InvoiceItem extends Model
         'invoice_id',
         'quotation_item_id',
         'buyer_po_id',
+        'buyer_po_item_id',
+        'item_fulfilment_id',
         'delivery_order_id',
         'line_number',
         'item_description',
@@ -46,6 +48,16 @@ class InvoiceItem extends Model
     public function buyerPo(): BelongsTo
     {
         return $this->belongsTo(BuyerPo::class);
+    }
+
+    public function buyerPoItem(): BelongsTo
+    {
+        return $this->belongsTo(BuyerPoItem::class);
+    }
+
+    public function itemFulfilment(): BelongsTo
+    {
+        return $this->belongsTo(ItemFulfilment::class);
     }
 
     public function deliveryOrder(): BelongsTo

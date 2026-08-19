@@ -3,9 +3,9 @@
 <head>
     <meta charset="utf-8">
     <style>
-        body { color: #111827; font-family: DejaVu Sans, Arial, sans-serif; font-size: 11px; margin: 22px; }
-        .header, .footer { text-align: center; }
-        .header img, .footer img { max-width: 100%; }
+        @include('documents.partials.page-chrome-css')
+
+        body { color: #111827; font-family: DejaVu Sans, Arial, sans-serif; font-size: 11px; }
         h1 { color: #1f4e79; font-size: 20px; margin: 10px 0 12px; text-align: center; }
         table { border-collapse: collapse; width: 100%; }
         td, th { border: 1px solid #bfbfbf; padding: 6px; vertical-align: top; }
@@ -13,14 +13,10 @@
         .label { color: #1f4e79; font-weight: bold; }
         .items { margin-top: 14px; }
         .signature td { height: 70px; text-align: center; }
-        .footer { margin-top: 20px; }
+
     </style>
 </head>
 <body>
-    @if ($assets['header'])
-        <div class="header"><img src="{{ $assets['header'] }}" alt=""></div>
-    @endif
-
     <h1>Delivery Order</h1>
 
     <table>
@@ -46,22 +42,30 @@
         </tr>
     </table>
 
-    <table class="items">
-        <tr>
-            <th style="width: 12%;">SL No</th>
-            <th>Item Description</th>
-            <th style="width: 18%;">Qty</th>
-        </tr>
-        @foreach ($snapshot['items'] as $item)
+    <table class="items items-table">
+        <thead>
             <tr>
-                <td style="text-align: center;">{{ $item['line_number'] }}</td>
-                <td>{!! nl2br(e($item['description'])) !!}</td>
-                <td style="text-align: center;">{{ $item['quantity'] }} {{ $item['uom'] }}</td>
+                <th style="width: 12%;">SL No</th>
+                <th style="width: 18%;">Buyer Item Code</th>
+                <th>Item Description</th>
+                <th style="width: 18%;">Qty</th>
             </tr>
-        @endforeach
+        </thead>
+        <tbody>
+            @foreach ($snapshot['items'] as $item)
+                @foreach ($item['pdf_description_chunks'] ?? [(string) $item['description']] as $chunkIndex => $descriptionChunk)
+                    <tr @class(['item-continuation' => $chunkIndex > 0])>
+                        <td style="text-align: center;">{{ $chunkIndex === 0 ? $item['line_number'] : '' }}</td>
+                        <td style="text-align: center;">{{ $chunkIndex === 0 ? ($item['buyer_item_code'] ?: '-') : '' }}</td>
+                        <td>{!! nl2br(e($descriptionChunk)) !!}</td>
+                        <td style="text-align: center;">{{ $chunkIndex === 0 ? $item['quantity'].' '.$item['uom'] : '' }}</td>
+                    </tr>
+                @endforeach
+            @endforeach
+        </tbody>
     </table>
 
-    <table class="signature" style="margin-top: 24px;">
+    <table class="signature document-keep-together" style="margin-top: 24px;">
         <tr>
             <th>Delivered By</th>
             <th>Received By / Customer Signature</th>
@@ -72,8 +76,5 @@
         </tr>
     </table>
 
-    @if ($assets['footer'])
-        <div class="footer"><img src="{{ $assets['footer'] }}" alt=""></div>
-    @endif
 </body>
 </html>

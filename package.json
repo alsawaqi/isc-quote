@@ -19,6 +19,8 @@
         "vue-tsc": "^3.2.8"
     },
     "dependencies": {
+        "@tiptap/core": "^3.23.4",
+        "@tiptap/extension-underline": "^3.23.4",
         "@tiptap/starter-kit": "^3.23.4",
         "@tiptap/vue-3": "^3.23.4",
         "lucide-vue-next": "^1.0.0",

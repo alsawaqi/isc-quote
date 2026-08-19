@@ -143,7 +143,7 @@ class UserPermissionAccessTest extends TestCase
         $this->assertSame($contactId, User::where('email', 'manu@example.test')->firstOrFail()->contact_id);
     }
 
-    public function test_multiple_salespeople_can_be_supplier_contacts_for_default_company(): void
+    public function test_multiple_salespeople_share_the_default_company_supplier_profile(): void
     {
         $this->seed(FoundationSeeder::class);
 
@@ -169,8 +169,9 @@ class UserPermissionAccessTest extends TestCase
                 ->assertCreated();
         }
 
-        $this->assertSame(2, Supplier::where('company_id', $internalCompany->id)->count());
+        $this->assertSame(1, Supplier::where('company_id', $internalCompany->id)->count());
         $this->assertSame(2, Contact::where('company_id', $internalCompany->id)->count());
+        $this->assertSame(2, Contact::where('company_id', $internalCompany->id)->where('serves_supplier', true)->count());
     }
 
     public function test_only_the_three_fixed_roles_can_exist(): void
