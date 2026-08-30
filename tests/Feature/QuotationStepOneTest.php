@@ -500,7 +500,6 @@ class QuotationStepOneTest extends TestCase
                         'manufacturer_description' => '<p>Terminal box suitable for RHS mounting.</p><ul><li>Weatherproof enclosure</li><li>Include internal feature code TB-RHS-24.</li></ul>',
                         'quantity' => 2,
                         'uom' => 'EA',
-                        'delivery_date' => '2026-09-30',
                         'incoterm_id' => $context['incoterm']->id,
                         'unit_price' => '150.250',
                         'vat_rate' => '5',
@@ -514,7 +513,6 @@ class QuotationStepOneTest extends TestCase
                         'manufacturer_description' => '<p>Cable gland kit with internal packing note.</p>',
                         'quantity' => 3,
                         'uom' => 'PCS',
-                        'delivery_date' => '2026-10-05',
                         'incoterm_id' => $context['incoterm']->id,
                         'unit_price' => '10.000',
                         'vat_rate' => '0',
@@ -534,7 +532,6 @@ class QuotationStepOneTest extends TestCase
             ->assertJsonPath('data.items.0.vat_rate', '5.000')
             ->assertJsonPath('data.items.1.vat_rate', '0.000')
             ->assertJsonPath('data.items.0.product_code', 'TB-RHS-24')
-            ->assertJsonPath('data.items.0.delivery_date', '2026-09-30')
             ->assertJsonPath('data.items.0.incoterm_id', $context['incoterm']->id)
             ->assertJsonPath('data.items.0.incoterm_code', 'DDP')
             ->assertJsonPath('data.items.0.total_price', '300.500')
@@ -546,6 +543,7 @@ class QuotationStepOneTest extends TestCase
             ->assertJsonPath('data.totals.charges_total', '25.000')
             ->assertJsonPath('data.totals.discounts_total', '27.775')
             ->assertJsonPath('data.totals.grand_total', '341.576');
+        $this->assertArrayNotHasKey('delivery_date', $response->json('data.items.0'));
 
         $this->assertDatabaseHas('products', [
             'manufacturer_id' => $manufacturer->id,
@@ -565,7 +563,7 @@ class QuotationStepOneTest extends TestCase
             'title' => 'Terminal Box Assembly',
             'quantity' => '2.000',
             'uom' => 'EA',
-            'delivery_date' => '2026-09-30 00:00:00',
+            'delivery_date' => null,
             'incoterm_id' => $context['incoterm']->id,
             'unit_price' => '150.250',
             'total_price' => '300.500',
@@ -582,6 +580,61 @@ class QuotationStepOneTest extends TestCase
             'discount_type' => 'percentage',
             'amount' => '5.000',
         ]);
+    }
+
+    public function test_quotation_items_reject_an_exact_delivery_date_before_a_buyer_po_exists(): void
+    {
+        $context = $this->quotationContext();
+        $manufacturer = Manufacturer::create([
+            'country_id' => $context['country']->id,
+            'name' => 'ABB LLC',
+            'status' => 'active',
+        ]);
+        $quotationId = $this->createQuotation($context);
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/items", [
+                'items' => [[
+                    'manufacturer_id' => $manufacturer->id,
+                    'product_code' => 'TB-RHS-24',
+                    'product_name' => 'Terminal Box',
+                    'title' => 'Terminal Box Assembly',
+                    'buyer_description' => '<p>Terminal box suitable for RHS mounting.</p>',
+                    'quantity' => 2,
+                    'uom' => 'EA',
+                    'delivery_date' => '2026-09-30',
+                    'incoterm_id' => $context['incoterm']->id,
+                    'unit_price' => '150.250',
+                    'vat_rate' => '5',
+                ]],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['items.0.delivery_date']);
+
+        $this->assertDatabaseCount('quotation_items', 0);
+    }
+
+    public function test_quotation_delivery_period_must_be_stated_in_weeks(): void
+    {
+        $context = $this->quotationContext();
+
+        $this->withBearerToken($context['salesperson'])
+            ->postJson('/api/quotations', [
+                'buyer_company_id' => $context['buyerCompany']->id,
+                'buyer_contact_id' => $context['buyerContact']->id,
+                'quotation_validity_value' => 30,
+                'quotation_validity_unit' => 'days',
+                'payment_term_days' => 45,
+                'delivery_period_min' => 22,
+                'delivery_period_max' => 24,
+                'delivery_period_unit' => 'days',
+                'delivery_period_type' => 'working',
+                'accepted_invoice_currency' => 'OMR',
+                'incoterm_id' => $context['incoterm']->id,
+                'delivery_responsibility' => 'isc',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['delivery_period_unit']);
     }
 
     public function test_salesperson_can_save_step_three_terms_with_required_clauses_and_custom_terms(): void

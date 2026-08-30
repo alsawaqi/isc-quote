@@ -42,6 +42,11 @@ class QuotationController extends Controller
 {
     private const PERIOD_UNITS = ['days', 'weeks', 'months'];
 
+    /**
+     * Quotations communicate a delivery window rather than an exact delivery date.
+     */
+    private const QUOTATION_DELIVERY_UNIT = 'weeks';
+
     private const DELIVERY_TYPES = ['working', 'calendar'];
 
     private const PAYMENT_CUSTOMER_TYPES = ['credit', 'paying'];
@@ -231,7 +236,7 @@ class QuotationController extends Controller
             'payment_customer_type' => ['nullable', Rule::in(self::PAYMENT_CUSTOMER_TYPES)],
             'delivery_period_min' => ['required', 'integer', 'min:0', 'max:3650'],
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
-            'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
+            'delivery_period_unit' => ['required', Rule::in([self::QUOTATION_DELIVERY_UNIT])],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
             'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
@@ -311,7 +316,7 @@ class QuotationController extends Controller
             'payment_customer_type' => ['nullable', Rule::in(self::PAYMENT_CUSTOMER_TYPES)],
             'delivery_period_min' => ['required', 'integer', 'min:0', 'max:3650'],
             'delivery_period_max' => ['required', 'integer', 'gte:delivery_period_min', 'max:3650'],
-            'delivery_period_unit' => ['required', Rule::in(self::PERIOD_UNITS)],
+            'delivery_period_unit' => ['required', Rule::in([self::QUOTATION_DELIVERY_UNIT])],
             'delivery_period_type' => ['required', Rule::in(self::DELIVERY_TYPES)],
             'accepted_invoice_currency' => ['required', Rule::in($this->currencyCodes())],
             'incoterm_id' => [
@@ -497,7 +502,7 @@ class QuotationController extends Controller
             'items.*.manufacturer_description' => ['nullable', 'string'],
             'items.*.quantity' => ['required', 'numeric', 'min:0.001', 'max:999999999'],
             'items.*.uom' => ['required', 'string', 'max:24', Rule::in($this->uomCodes())],
-            'items.*.delivery_date' => ['nullable', 'date'],
+            'items.*.delivery_date' => ['prohibited'],
             'items.*.incoterm_id' => [
                 'nullable',
                 'integer',
@@ -558,7 +563,8 @@ class QuotationController extends Controller
                     'manufacturer_description' => $item['manufacturer_description'] ?? null,
                     'quantity' => $this->money($item['quantity']),
                     'uom' => trim((string) $item['uom']),
-                    'delivery_date' => $item['delivery_date'] ?? null,
+                    // Exact delivery dates are set on the supplier PO after the buyer PO is received.
+                    'delivery_date' => null,
                     'incoterm_id' => $item['incoterm_id'] ?? $quotation->incoterm_id,
                     'unit_price' => $this->money($item['unit_price']),
                     'vat_rate' => $this->money($item['vat_rate'] ?? 0),
@@ -1607,7 +1613,6 @@ class QuotationController extends Controller
             'manufacturer_description' => $item->manufacturer_description,
             'quantity' => $this->money($item->quantity),
             'uom' => $item->uom,
-            'delivery_date' => $item->delivery_date?->toDateString(),
             'incoterm_id' => $item->incoterm_id,
             'incoterm_code' => $item->incoterm?->code,
             'unit_price' => $this->money($item->unit_price),
@@ -2169,7 +2174,6 @@ class QuotationController extends Controller
             'title' => $this->canonicalRevisionText($item['title'] ?? null),
             'quantity' => $this->canonicalRevisionMoney($item['quantity'] ?? 0),
             'uom' => $this->canonicalRevisionText($item['uom'] ?? null),
-            'delivery_date' => $this->canonicalRevisionText($item['delivery_date'] ?? null),
             'incoterm' => $this->canonicalRevisionText($item['incoterm'] ?? $item['incoterm_code'] ?? null),
             'unit_price' => $this->canonicalRevisionMoney($item['unit_price'] ?? 0),
             'vat_rate' => $this->canonicalRevisionMoney($item['vat_rate'] ?? 0),

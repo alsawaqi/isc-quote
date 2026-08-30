@@ -236,17 +236,9 @@
                         <td>
                             @if($chunkIndex === 0)
                                 <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
-                                @if(($item['delivery_date'] ?? null) || ($item['incoterm'] ?? null))
+                                @if($item['incoterm'] ?? null)
                                     <div style="font-size: 8px; color: #4b5563; margin-bottom: 3px;">
-                                        @if($item['delivery_date'] ?? null)
-                                            Delivery Date: {{ $item['delivery_date'] }}
-                                        @endif
-                                        @if(($item['delivery_date'] ?? null) && ($item['incoterm'] ?? null))
-                                            |
-                                        @endif
-                                        @if($item['incoterm'] ?? null)
-                                            Incoterm: {{ $item['incoterm'] }}
-                                        @endif
+                                        Incoterm: {{ $item['incoterm'] }}
                                     </div>
                                 @endif
                             @endif

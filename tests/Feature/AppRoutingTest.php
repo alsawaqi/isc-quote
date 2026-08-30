@@ -30,6 +30,21 @@ class AppRoutingTest extends TestCase
         $this->assertStringContainsString('Edit Quotation', $quotationDetail);
     }
 
+    public function test_buyer_po_detail_fields_remain_editable_when_an_item_is_not_selected(): void
+    {
+        $quotationDetail = file_get_contents(resource_path('js/components/QuotationDetailView.vue'));
+
+        $this->assertStringContainsString('Buyer PO / LPO Number', $quotationDetail);
+        $this->assertStringContainsString('v-model.trim="buyerPoItemForms[item.id].po_number"', $quotationDetail);
+        $this->assertStringContainsString('v-model="buyerPoItemForms[item.id].po_date"', $quotationDetail);
+        $this->assertStringContainsString('v-model="buyerPoItemForms[item.id].po_value"', $quotationDetail);
+        $this->assertStringNotContainsString(':disabled="!buyerPoItemForms[item.id].selected"', $quotationDetail);
+        $this->assertStringContainsString('function selectBuyerPoItem(itemId: number): void', $quotationDetail);
+        $this->assertStringContainsString('@focus="selectBuyerPoItem(item.id)"', $quotationDetail);
+        $this->assertStringContainsString(':required="buyerPoItemForms[item.id].selected"', $quotationDetail);
+        $this->assertStringContainsString('itemForm.selected = true;', $quotationDetail);
+    }
+
     public function test_supplier_po_workspace_lists_existing_pos_before_creation(): void
     {
         $router = file_get_contents(resource_path('js/router.ts'));

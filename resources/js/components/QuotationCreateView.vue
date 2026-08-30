@@ -105,7 +105,6 @@ interface QuotationItemForm {
     buyer_description: string;
     quantity: number;
     uom: string;
-    delivery_date: string;
     incoterm_id: string;
     unit_price: number;
     vat_rate: number;
@@ -181,7 +180,6 @@ interface ExistingQuotationItem {
     buyer_description: string | null;
     quantity: string;
     uom: string;
-    delivery_date?: string | null;
     incoterm_id?: number | null;
     incoterm_code?: string | null;
     unit_price: string;
@@ -387,7 +385,6 @@ function itemsSnapshot(): string {
             buyer_description: item.buyer_description,
             quantity: Number(item.quantity),
             uom: item.uom.trim(),
-            delivery_date: item.delivery_date,
             incoterm_id: String(item.incoterm_id),
             unit_price: Number(item.unit_price),
             vat_rate: Number(item.vat_rate),
@@ -530,7 +527,6 @@ const canSaveItems = computed(() => {
                 hasRichTextContent(item.buyer_description) &&
                 item.quantity > 0 &&
                 item.uom.trim() &&
-                item.delivery_date &&
                 item.incoterm_id &&
                 item.unit_price >= 0 &&
                 item.vat_rate >= 0 &&
@@ -710,7 +706,6 @@ function addItem(): void {
         buyer_description: '',
         quantity: 1,
         uom: 'EA',
-        delivery_date: '',
         incoterm_id: form.incoterm_id ? String(form.incoterm_id) : '',
         unit_price: 0,
         vat_rate: 0,
@@ -917,7 +912,7 @@ function populateExistingQuotation(detail: ExistingQuotationDetail): void {
         form.payment_customer_type = detail.payment_customer_type ?? 'credit';
         form.delivery_period_min = Number(detail.delivery_period_min);
         form.delivery_period_max = Number(detail.delivery_period_max);
-        form.delivery_period_unit = detail.delivery_period_unit;
+        form.delivery_period_unit = 'weeks';
         form.delivery_period_type = detail.delivery_period_type;
         form.accepted_invoice_currency = detail.accepted_invoice_currency;
         form.vat_pricing = detail.vat_pricing ?? 'exclusive';
@@ -936,7 +931,6 @@ function populateExistingQuotation(detail: ExistingQuotationDetail): void {
         buyer_description: item.buyer_description ?? '',
         quantity: Number(item.quantity),
         uom: item.uom,
-        delivery_date: item.delivery_date ?? '',
         incoterm_id: item.incoterm_id ? String(item.incoterm_id) : String(detail.incoterm_id),
         unit_price: Number(item.unit_price),
         vat_rate: Number(item.vat_rate ?? 0),
@@ -1064,7 +1058,7 @@ async function submitStepOne(): Promise<void> {
                 payment_customer_type: form.payment_customer_type,
                 delivery_period_min: Number(form.delivery_period_min),
                 delivery_period_max: Number(form.delivery_period_max),
-                delivery_period_unit: form.delivery_period_unit,
+                delivery_period_unit: 'weeks',
                 delivery_period_type: form.delivery_period_type,
                 accepted_invoice_currency: form.accepted_invoice_currency,
                 incoterm_id: Number(form.incoterm_id),
@@ -1177,7 +1171,6 @@ async function submitItems(): Promise<void> {
                     buyer_description: item.buyer_description,
                     quantity: Number(item.quantity),
                     uom: item.uom.trim(),
-                    delivery_date: item.delivery_date || null,
                     incoterm_id: Number(item.incoterm_id),
                     unit_price: Number(item.unit_price),
                     vat_rate: Number(item.vat_rate),
@@ -1480,11 +1473,7 @@ onMounted(loadOptions);
                                 <option value="working">Working</option>
                                 <option value="calendar">Calendar</option>
                             </select>
-                            <select v-model="form.delivery_period_unit" required aria-label="Delivery period unit">
-                                <option v-for="unit in options.period_units" :key="String(unit.id)" :value="unit.id">
-                                    {{ unit.name }}
-                                </option>
-                            </select>
+                            <input value="Weeks" type="text" readonly aria-label="Delivery period unit" />
                         </div>
                     </label>
 
@@ -1800,10 +1789,6 @@ onMounted(loadOptions);
                             </select>
                         </label>
                         <label class="quote-field">
-                            <span>Delivery Date<b>*</b></span>
-                            <input v-model="item.delivery_date" type="date" required :aria-label="`Line ${index + 1} Delivery Date`" />
-                        </label>
-                        <label class="quote-field">
                             <span>Incoterm<b>*</b></span>
                             <select v-model="item.incoterm_id" required :aria-label="`Line ${index + 1} Incoterm`">
                                 <option value="">Select Incoterm</option>
@@ -2069,7 +2054,7 @@ onMounted(loadOptions);
                         <article v-for="(item, index) in items" :key="item.key">
                             <strong>{{ index + 1 }}. {{ item.product_code }} - {{ item.title }}</strong>
                             <span>{{ optionName(options.manufacturers, item.manufacturer_id) }} - {{ item.quantity }} {{ item.uom }} x {{ money(item.unit_price) }} + {{ money(item.vat_rate) }}% VAT</span>
-                            <small>{{ item.delivery_date || '-' }} | {{ incotermOptionLabel(item.incoterm_id) }}</small>
+                            <small>Delivery: {{ form.delivery_period_min }} to {{ form.delivery_period_max }} {{ form.delivery_period_type }} weeks | {{ incotermOptionLabel(item.incoterm_id) }}</small>
                             <b>{{ form.accepted_invoice_currency }} {{ money(lineTotalWithVat(item)) }}</b>
                         </article>
                     </div>

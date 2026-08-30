@@ -26,7 +26,6 @@ interface QuotationItem {
     title: string;
     quantity: string;
     uom: string;
-    delivery_date?: string | null;
     incoterm_code?: string | null;
     unit_price: string;
     vat_rate: string;
@@ -129,6 +128,10 @@ interface QuotationDetail {
     payment_customer_type_label: string;
     payment_schedule_summary: string;
     payment_schedules: PaymentScheduleRecord[];
+    delivery_period_min: number;
+    delivery_period_max: number;
+    delivery_period_type: string;
+    delivery_period_unit: 'weeks';
     accepted_invoice_currency: string;
     vat_pricing: 'exclusive' | 'inclusive';
     charges: Array<{ line_number: number; label: string; amount: string }>;
@@ -301,7 +304,22 @@ async function downloadBuyerPo(buyerPo: BuyerPo): Promise<void> {
 }
 
 function handleBuyerPoItemFile(itemId: number, event: Event): void {
-    buyerPoItemForms[itemId].po_file = (event.target as HTMLInputElement).files?.[0] ?? null;
+    const itemForm = buyerPoItemForms[itemId];
+
+    if (!itemForm) {
+        return;
+    }
+
+    itemForm.selected = true;
+    itemForm.po_file = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+function selectBuyerPoItem(itemId: number): void {
+    const itemForm = buyerPoItemForms[itemId];
+
+    if (itemForm) {
+        itemForm.selected = true;
+    }
 }
 
 async function submitBuyerPo(): Promise<void> {
@@ -540,7 +558,7 @@ onMounted(loadDetail);
                             <article v-for="item in quotation.items" :key="item.id">
                                 <strong>{{ item.line_number }}. {{ item.product_code ?? '-' }} - {{ item.title }}</strong>
                                 <span>{{ item.manufacturer_name ?? '-' }} - {{ item.quantity }} {{ item.uom }} x {{ item.unit_price }} + {{ item.vat_rate }}% VAT</span>
-                                <small>{{ item.delivery_date ?? '-' }} | {{ item.incoterm_code ?? quotation.incoterm_code ?? '-' }}</small>
+                                <small>Delivery: {{ quotation.delivery_period_min }} to {{ quotation.delivery_period_max }} {{ quotation.delivery_period_type }} {{ quotation.delivery_period_unit }} | {{ item.incoterm_code ?? quotation.incoterm_code ?? '-' }}</small>
                                 <b>{{ quotation.accepted_invoice_currency }} {{ money(Number(item.total_with_vat ?? item.total_price)) }}</b>
                             </article>
                         </div>
@@ -661,22 +679,22 @@ onMounted(loadDetail);
 
                                     <label class="quote-field">
                                         <span>Buyer Item Code</span>
-                                        <input v-model.trim="buyerPoItemForms[item.id].buyer_item_code" type="text" maxlength="100" :disabled="!buyerPoItemForms[item.id].selected" />
+                                        <input v-model.trim="buyerPoItemForms[item.id].buyer_item_code" type="text" maxlength="100" @focus="selectBuyerPoItem(item.id)" />
                                     </label>
 
                                     <label class="quote-field">
                                         <span>Buyer PO / LPO Number<b>*</b></span>
-                                        <input v-model.trim="buyerPoItemForms[item.id].po_number" type="text" maxlength="100" required :disabled="!buyerPoItemForms[item.id].selected" />
+                                        <input v-model.trim="buyerPoItemForms[item.id].po_number" type="text" maxlength="100" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
                                     </label>
 
                                     <label class="quote-field">
                                         <span>PO Date<b>*</b></span>
-                                        <input v-model="buyerPoItemForms[item.id].po_date" type="date" required :disabled="!buyerPoItemForms[item.id].selected" />
+                                        <input v-model="buyerPoItemForms[item.id].po_date" type="date" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
                                     </label>
 
                                     <label class="quote-field">
                                         <span>Item PO Amount<b>*</b></span>
-                                        <input v-model="buyerPoItemForms[item.id].po_value" type="number" min="0" step="0.001" required :disabled="!buyerPoItemForms[item.id].selected" />
+                                        <input v-model="buyerPoItemForms[item.id].po_value" type="number" min="0" step="0.001" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
                                     </label>
 
                                     <label class="quote-field">
@@ -684,8 +702,8 @@ onMounted(loadDetail);
                                         <input
                                             accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                                             type="file"
-                                            required
-                                            :disabled="!buyerPoItemForms[item.id].selected"
+                                            :required="buyerPoItemForms[item.id].selected"
+                                            @focus="selectBuyerPoItem(item.id)"
                                             @change="handleBuyerPoItemFile(item.id, $event)"
                                         />
                                     </label>

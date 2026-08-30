@@ -8,6 +8,8 @@ use App\Models\Country;
 use App\Models\Designation;
 use App\Models\Incoterm;
 use App\Models\Manufacturer;
+use App\Models\QuotationItem;
+use App\Models\QuotationVersion;
 use App\Models\Role;
 use App\Models\Supplier;
 use App\Models\User;
@@ -28,6 +30,10 @@ class QuotationRevisionDocumentTest extends TestCase
         Storage::disk('local')->deleteDirectory('quotation-assets');
         $context = $this->quotationContext();
         $quotationId = $this->createCompleteQuotation($context);
+        // Simulate a legacy quotation. Exact item dates must not leak into a quotation revision.
+        QuotationItem::query()
+            ->where('quotation_id', $quotationId)
+            ->update(['delivery_date' => '2026-09-30']);
 
         $response = $this->withBearerToken($context['salesperson'])
             ->postJson("/api/quotations/{$quotationId}/finalize");
@@ -54,6 +60,11 @@ class QuotationRevisionDocumentTest extends TestCase
             'action' => 'quotation.version_created',
             'summary' => 'Ahmed Mansoor created quotation version 1.',
         ]);
+        $version = QuotationVersion::query()
+            ->where('quotation_id', $quotationId)
+            ->where('version_number', 1)
+            ->firstOrFail();
+        $this->assertArrayNotHasKey('delivery_date', $version->snapshot['items'][0]);
 
         $docxPath = Storage::disk('local')->path($response->json('data.docx_path'));
         $pdfPath = Storage::disk('local')->path($response->json('data.pdf_path'));
@@ -76,6 +87,7 @@ class QuotationRevisionDocumentTest extends TestCase
         $this->assertStringContainsString('RFQ 6000024422 PR 11729328', $documentXml);
         $this->assertStringContainsString('ABB-FM-001', $documentXml);
         $this->assertStringContainsString('Within 45 days from the date of Invoice.', $documentXml);
+        $this->assertStringNotContainsString('30th Sep 2026', $documentXml);
         $this->assertGreaterThanOrEqual(4, count($commercialMediaFiles));
         $this->assertMatchesRegularExpression(
             '/<w:p(?: [^>]*)?>(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<\/w:p>/s',
@@ -98,7 +110,14 @@ class QuotationRevisionDocumentTest extends TestCase
         $technicalZip->close();
 
         $this->assertStringContainsString('Technical Offer', $technicalXml);
+        $this->assertStringNotContainsString('30th Sep 2026', $technicalXml);
         $this->assertStringContainsString('ABB-FM-001', $technicalXml);
+        $this->assertMatchesRegularExpression(
+            '/SL No.*?Material \/ Item Code.*?Description.*?QTY/s',
+            $technicalXml,
+            'Technical item columns should place Material / Item Code directly after SL No.'
+        );
+        $this->assertStringNotContainsString('Material / Item Code: ABB-FM-001', $technicalXml);
         $this->assertStringNotContainsString('ACCEPTED TERMS OF PAYMENT', $technicalXml);
         $this->assertStringNotContainsString('ACCEPTED INVOICE CURRENCY', $technicalXml);
         $this->assertStringNotContainsString('Unit Price', $technicalXml);

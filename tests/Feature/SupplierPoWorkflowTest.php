@@ -45,6 +45,35 @@ class SupplierPoWorkflowTest extends TestCase
         $this->assertNotContains('USD', collect($response->json('currencies'))->pluck('id')->all());
     }
 
+    public function test_supplier_po_does_not_prefill_a_legacy_quotation_delivery_date(): void
+    {
+        $context = $this->supplierPoContext();
+        $accepted = $this->acceptedQuotationItem($context, 'Occidental of Oman, Inc', 'OXY', '4502757812', 'ABB Flameproof Motor');
+        $accepted['item']->forceFill(['delivery_date' => '2026-09-30'])->save();
+
+        $options = $this->withBearerToken($context['salesperson'])
+            ->getJson('/api/supplier-pos/create-options')
+            ->assertOk();
+        $pendingItem = collect($options->json('pending_items'))->firstWhere('quotation_item_id', $accepted['item']->id);
+
+        $this->assertIsArray($pendingItem);
+        $this->assertArrayNotHasKey('delivery_date', $pendingItem);
+
+        $payload = $this->supplierPoRequestPayload($context, $accepted['item']);
+        unset($payload['items'][0]['delivery_date']);
+
+        $response = $this->withBearerToken($context['salesperson'])
+            ->postJson('/api/supplier-pos', $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.lines.0.delivery_date', null);
+
+        $this->assertDatabaseHas('supplier_po_lines', [
+            'supplier_po_id' => $response->json('data.id'),
+            'quotation_item_id' => $accepted['item']->id,
+            'delivery_date' => null,
+        ]);
+    }
+
     public function test_salesperson_can_create_one_supplier_po_from_items_across_multiple_buyer_pos(): void
     {
         Storage::disk('local')->deleteDirectory('generated/supplier-pos');

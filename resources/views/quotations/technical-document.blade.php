@@ -214,7 +214,7 @@
         </tr>
         <tr>
             <td>
-                <span class="section-label">DATE OF DELIVERY</span>
+                <span class="section-label">DELIVERY PERIOD</span>
                 <span class="delivery-highlight">{{ $snapshot['quotation']['delivery_period'] }}</span>
             </td>
             <td><span class="section-label">&nbsp;</span>&nbsp;</td>
@@ -229,7 +229,8 @@
         <thead>
             <tr>
                 <th style="width: 8%;">SL No</th>
-                <th style="width: 81%; text-align: left;">Description</th>
+                <th style="width: 18%;">Material / Item Code</th>
+                <th style="width: 63%; text-align: left;">Description</th>
                 <th style="width: 11%;">QTY</th>
             </tr>
         </thead>
@@ -242,23 +243,13 @@
                 @foreach($descriptionChunks as $chunkIndex => $descriptionChunk)
                     <tr @class(['item-continuation' => $chunkIndex > 0])>
                         <td>{{ $chunkIndex === 0 ? $item['line_number'] : '' }}</td>
+                        <td>{{ $chunkIndex === 0 ? ($item['product_code'] ?? '-') : '' }}</td>
                         <td>
                             @if($chunkIndex === 0)
                                 <div class="product-title">{{ trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']) }}</div>
-                                @if($item['product_code'] ?? null)
-                                    <div class="product-code">Material / Item Code: {{ $item['product_code'] }}</div>
-                                @endif
-                                @if(($item['delivery_date'] ?? null) || ($item['incoterm'] ?? null))
+                                @if($item['incoterm'] ?? null)
                                     <div class="product-code">
-                                        @if($item['delivery_date'] ?? null)
-                                            Delivery Date: {{ $item['delivery_date'] }}
-                                        @endif
-                                        @if(($item['delivery_date'] ?? null) && ($item['incoterm'] ?? null))
-                                            |
-                                        @endif
-                                        @if($item['incoterm'] ?? null)
-                                            Incoterm: {{ $item['incoterm'] }}
-                                        @endif
+                                        Incoterm: {{ $item['incoterm'] }}
                                     </div>
                                 @endif
                             @endif

@@ -88,7 +88,6 @@ class QuotationDocumentService
                 'description_html' => $this->cleanRichHtml($item->buyer_description),
                 'quantity' => $this->money($item->quantity),
                 'uom' => $item->uom,
-                'delivery_date' => $this->formatDate($item->delivery_date),
                 'incoterm' => $item->incoterm?->code ?? $quotation->incoterm?->code,
                 'incoterm_name' => $item->incoterm?->name,
                 'unit_price' => $this->money($item->unit_price),
@@ -228,7 +227,6 @@ class QuotationDocumentService
             $descriptionCell = $itemsTable->addCell(3800);
             $descriptionCell->addText(trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']), ['bold' => true]);
             $itemMeta = array_filter([
-                ! empty($item['delivery_date']) ? 'Delivery Date: '.$item['delivery_date'] : null,
                 ! empty($item['incoterm']) ? 'Incoterm: '.$item['incoterm'] : null,
             ]);
 
@@ -329,7 +327,7 @@ class QuotationDocumentService
         $this->addInfoRow($infoTable, 'SUPPLIER', $this->companyLines($snapshot['supplier']), 'BUYER', $this->companyLines($snapshot['buyer']));
         $this->addInfoRow($infoTable, 'SUPPLIERS CONTACT', $this->contactLines($snapshot['supplier_contact']), 'BUYERS CONTACT', $this->contactLines($snapshot['buyer_contact']));
         $this->addInfoRow($infoTable, 'QUOTATION VALIDITY PERIOD', [$this->technicalValidity($snapshot)], '', []);
-        $this->addInfoRow($infoTable, 'DATE OF DELIVERY', [$snapshot['quotation']['delivery_period']], '', []);
+        $this->addInfoRow($infoTable, 'DELIVERY PERIOD', [$snapshot['quotation']['delivery_period']], '', []);
 
         if ($rfqTitle !== '') {
             $section->addTextBreak(1);
@@ -338,7 +336,12 @@ class QuotationDocumentService
 
         $itemsTable = $section->addTable('TechnicalItemsTable');
         $this->pageLayout->addWordTableHeader($itemsTable);
-        foreach ([['SL No', 700], ['Description', 7600], ['QTY', 1100]] as [$heading, $width]) {
+        foreach ([
+            ['SL No', 700],
+            ['Material / Item Code', 1600],
+            ['Description', 6000],
+            ['QTY', 1100],
+        ] as [$heading, $width]) {
             $itemsTable->addCell($width, ['bgColor' => 'D9D9D9', 'valign' => 'center'])
                 ->addText($heading, ['bold' => true], ['alignment' => Jc::CENTER]);
         }
@@ -346,13 +349,10 @@ class QuotationDocumentService
         foreach ($snapshot['items'] as $item) {
             $itemsTable->addRow();
             $itemsTable->addCell(700)->addText((string) $item['line_number'], [], ['alignment' => Jc::CENTER]);
-            $descriptionCell = $itemsTable->addCell(7600);
+            $itemsTable->addCell(1600)->addText((string) ($item['product_code'] ?: '-'), [], ['alignment' => Jc::CENTER]);
+            $descriptionCell = $itemsTable->addCell(6000);
             $descriptionCell->addText(trim(($item['manufacturer'] ? $item['manufacturer'].' - ' : '').$item['title']), ['bold' => true]);
-            if (! empty($item['product_code'])) {
-                $descriptionCell->addText('Material / Item Code: '.$item['product_code'], ['bold' => true]);
-            }
             $itemMeta = array_filter([
-                ! empty($item['delivery_date']) ? 'Delivery Date: '.$item['delivery_date'] : null,
                 ! empty($item['incoterm']) ? 'Incoterm: '.$item['incoterm'] : null,
             ]);
 

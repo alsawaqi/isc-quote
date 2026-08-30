@@ -341,7 +341,8 @@ class SupplierPoController extends Controller
                     'item_description' => $requestLine['item_description'] ?? ($item->manufacturer_description ?: $item->buyer_description),
                     'quantity' => $item->quantity,
                     'uom' => $item->uom,
-                    'delivery_date' => $requestLine['delivery_date'] ?? $item->delivery_date?->toDateString(),
+                    // Delivery dates are confirmed at the supplier-PO stage, after the buyer PO is received.
+                    'delivery_date' => $requestLine['delivery_date'] ?? null,
                     'incoterm_id' => $requestLine['incoterm_id'] ?? $supplierPo->incoterm_id,
                     'unit_cost' => $unitCost,
                     'total_cost' => $this->money((float) $item->quantity * (float) $unitCost),
@@ -613,7 +614,8 @@ class SupplierPoController extends Controller
                     'item_description' => $requestLine['item_description'] ?? ($item->manufacturer_description ?: $item->buyer_description),
                     'quantity' => $item->quantity,
                     'uom' => $item->uom,
-                    'delivery_date' => $requestLine['delivery_date'] ?? $item->delivery_date?->toDateString(),
+                    // Delivery dates are confirmed at the supplier-PO stage, after the buyer PO is received.
+                    'delivery_date' => $requestLine['delivery_date'] ?? null,
                     'incoterm_id' => $requestLine['incoterm_id'] ?? $supplierPo->incoterm_id,
                     'unit_cost' => $unitCost,
                     'total_cost' => $this->money((float) $item->quantity * (float) $unitCost),
@@ -1549,7 +1551,6 @@ class SupplierPoController extends Controller
             'buyer_po_date' => $buyerPo?->po_date?->toDateString(),
             'buyer_item_code' => $buyerPoItem?->buyer_item_code,
             'buyer_po_item_amount' => $buyerPoItem ? $this->money($buyerPoItem->total_amount) : null,
-            'delivery_date' => $item->delivery_date?->toDateString(),
             'incoterm_id' => $item->incoterm_id,
             'incoterm_code' => $item->incoterm?->code,
             'manufacturer_id' => $item->manufacturer_id,

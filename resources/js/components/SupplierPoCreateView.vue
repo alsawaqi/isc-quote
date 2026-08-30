@@ -103,7 +103,7 @@ interface PendingItem {
     buyer_po_date: string | null;
     buyer_item_code: string | null;
     buyer_po_item_amount: string | null;
-    delivery_date: string | null;
+    delivery_date?: string | null;
     incoterm_id: number | null;
     incoterm_code: string | null;
     manufacturer_id: number | null;
@@ -579,7 +579,8 @@ function toggleItem(item: PendingItem): void {
         unit_cost: null,
         item_description: item.description ?? '',
         company_location_id: defaultLineFactoryId(item),
-        delivery_date: item.delivery_date ?? '',
+        // The exact delivery date is confirmed here, after the buyer PO is received.
+        delivery_date: '',
         incoterm_id: defaultLineIncotermId(item),
         coo_entries: [newCooEntry()],
     });
@@ -1416,7 +1417,7 @@ onMounted(loadOptions);
                         <div>
                             <span>{{ item.manufacturer_name ?? '-' }}</span>
                             <b>{{ item.quantity }} {{ item.uom }}</b>
-                            <small>Delivery {{ item.delivery_date ?? '-' }} | {{ item.incoterm_code ?? 'No Incoterm' }}</small>
+                            <small>Delivery date set in this Supplier PO | {{ item.incoterm_code ?? 'No Incoterm' }}</small>
                         </div>
 
                         <div>
