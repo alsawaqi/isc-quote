@@ -5408,7 +5408,29 @@ button:disabled {
 .buyer-po-form {
     display: grid;
     gap: 14px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.buyer-po-form .supplier-po-items {
+    grid-column: 1 / -1;
+    min-width: 0;
+    padding: 0;
+}
+
+.supplier-po-item-card.buyer-po-item-card {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.supplier-po-item-card.buyer-po-item-card > .buyer-po-item-select {
+    align-items: start;
+}
+
+.buyer-po-item-fields {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    min-width: 0;
 }
 
 .buyer-po-form-actions {

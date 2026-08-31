@@ -668,8 +668,8 @@ onMounted(loadDetail);
 
                         <form v-if="latestVersion && pendingBuyerPoItems.length" class="buyer-po-form" @submit.prevent="submitBuyerPo">
                             <div class="supplier-po-items">
-                                <article v-for="item in pendingBuyerPoItems" :key="item.id" class="supplier-po-item-card">
-                                    <label>
+                                <article v-for="item in pendingBuyerPoItems" :key="item.id" class="supplier-po-item-card buyer-po-item-card">
+                                    <label class="buyer-po-item-select">
                                         <input v-model="buyerPoItemForms[item.id].selected" type="checkbox" />
                                         <span>
                                             <strong>{{ item.product_code ?? '-' }} - {{ item.title }}</strong>
@@ -677,36 +677,38 @@ onMounted(loadDetail);
                                         </span>
                                     </label>
 
-                                    <label class="quote-field">
-                                        <span>Buyer Item Code</span>
-                                        <input v-model.trim="buyerPoItemForms[item.id].buyer_item_code" type="text" maxlength="100" @focus="selectBuyerPoItem(item.id)" />
-                                    </label>
+                                    <div class="buyer-po-item-fields">
+                                        <label class="quote-field">
+                                            <span>Buyer Item Code</span>
+                                            <input v-model.trim="buyerPoItemForms[item.id].buyer_item_code" type="text" maxlength="100" @focus="selectBuyerPoItem(item.id)" />
+                                        </label>
 
-                                    <label class="quote-field">
-                                        <span>Buyer PO / LPO Number<b>*</b></span>
-                                        <input v-model.trim="buyerPoItemForms[item.id].po_number" type="text" maxlength="100" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
-                                    </label>
+                                        <label class="quote-field">
+                                            <span>Buyer PO / LPO Number<b>*</b></span>
+                                            <input v-model.trim="buyerPoItemForms[item.id].po_number" type="text" maxlength="100" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
+                                        </label>
 
-                                    <label class="quote-field">
-                                        <span>PO Date<b>*</b></span>
-                                        <input v-model="buyerPoItemForms[item.id].po_date" type="date" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
-                                    </label>
+                                        <label class="quote-field">
+                                            <span>PO Date<b>*</b></span>
+                                            <input v-model="buyerPoItemForms[item.id].po_date" type="date" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
+                                        </label>
 
-                                    <label class="quote-field">
-                                        <span>Item PO Amount<b>*</b></span>
-                                        <input v-model="buyerPoItemForms[item.id].po_value" type="number" min="0" step="0.001" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
-                                    </label>
+                                        <label class="quote-field">
+                                            <span>Item PO Amount<b>*</b></span>
+                                            <input v-model="buyerPoItemForms[item.id].po_value" type="number" min="0" step="0.001" :required="buyerPoItemForms[item.id].selected" @focus="selectBuyerPoItem(item.id)" />
+                                        </label>
 
-                                    <label class="quote-field">
-                                        <span>Buyer PO File<b>*</b></span>
-                                        <input
-                                            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                                            type="file"
-                                            :required="buyerPoItemForms[item.id].selected"
-                                            @focus="selectBuyerPoItem(item.id)"
-                                            @change="handleBuyerPoItemFile(item.id, $event)"
-                                        />
-                                    </label>
+                                        <label class="quote-field">
+                                            <span>Buyer PO File<b>*</b></span>
+                                            <input
+                                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                                type="file"
+                                                :required="buyerPoItemForms[item.id].selected"
+                                                @focus="selectBuyerPoItem(item.id)"
+                                                @change="handleBuyerPoItemFile(item.id, $event)"
+                                            />
+                                        </label>
+                                    </div>
                                 </article>
                             </div>
 

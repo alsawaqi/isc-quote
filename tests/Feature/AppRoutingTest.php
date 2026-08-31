@@ -45,6 +45,20 @@ class AppRoutingTest extends TestCase
         $this->assertStringContainsString('itemForm.selected = true;', $quotationDetail);
     }
 
+    public function test_buyer_po_item_card_uses_a_full_width_responsive_field_grid(): void
+    {
+        $quotationDetail = file_get_contents(resource_path('js/components/QuotationDetailView.vue'));
+        $styles = file_get_contents(resource_path('css/app.css'));
+
+        $this->assertStringContainsString('class="supplier-po-item-card buyer-po-item-card"', $quotationDetail);
+        $this->assertStringContainsString('class="buyer-po-item-select"', $quotationDetail);
+        $this->assertStringContainsString('class="buyer-po-item-fields"', $quotationDetail);
+        $this->assertStringContainsString('.buyer-po-form .supplier-po-items', $styles);
+        $this->assertStringContainsString('.supplier-po-item-card.buyer-po-item-card', $styles);
+        $this->assertStringContainsString('.buyer-po-item-fields', $styles);
+        $this->assertStringContainsString('grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));', $styles);
+    }
+
     public function test_supplier_po_workspace_lists_existing_pos_before_creation(): void
     {
         $router = file_get_contents(resource_path('js/router.ts'));
