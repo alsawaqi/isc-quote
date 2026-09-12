@@ -13,6 +13,7 @@ use App\Models\QuotationVersion;
 use App\Models\Role;
 use App\Models\Supplier;
 use App\Models\User;
+use App\Services\QuotationOfferLayout;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -86,14 +87,12 @@ class QuotationRevisionDocumentTest extends TestCase
         $this->assertStringContainsString('ISC-COR-QT-', $documentXml);
         $this->assertStringContainsString('RFQ 6000024422 PR 11729328', $documentXml);
         $this->assertStringContainsString('ABB-FM-001', $documentXml);
+        $this->assertStringContainsString('3,256.000', $documentXml, 'Formatted snapshot prices must not be truncated at the comma.');
         $this->assertStringContainsString('Within 45 days from the date of Invoice.', $documentXml);
         $this->assertStringNotContainsString('30th Sep 2026', $documentXml);
         $this->assertGreaterThanOrEqual(4, count($commercialMediaFiles));
-        $this->assertMatchesRegularExpression(
-            '/<w:p(?: [^>]*)?>(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<v:shape(?:(?!<\/w:p>).)*<\/w:p>/s',
-            $documentXml,
-            'The commercial stamp and ABB branding should share one compact paragraph.'
-        );
+        $this->assertStringContainsString('w:w="12240" w:h="15840"', $documentXml, 'Offers use the sample Letter page size.');
+        $this->assertStringContainsString('w:fill="D9D9D9"', $documentXml);
 
         $technicalDocxPath = Storage::disk('local')->path(str_replace('.docx', '-technical.docx', $response->json('data.docx_path')));
         $technicalPdfPath = Storage::disk('local')->path(str_replace('.pdf', '-technical.pdf', $response->json('data.pdf_path')));
@@ -113,11 +112,11 @@ class QuotationRevisionDocumentTest extends TestCase
         $this->assertStringNotContainsString('30th Sep 2026', $technicalXml);
         $this->assertStringContainsString('ABB-FM-001', $technicalXml);
         $this->assertMatchesRegularExpression(
-            '/SL No.*?Material \/ Item Code.*?Description.*?QTY/s',
+            '/SL No.*?Description.*?QTY/s',
             $technicalXml,
-            'Technical item columns should place Material / Item Code directly after SL No.'
+            'Technical offers use the sample three-column table.'
         );
-        $this->assertStringNotContainsString('Material / Item Code: ABB-FM-001', $technicalXml);
+        $this->assertStringContainsString('Material / Item Code: ABB-FM-001', $technicalXml, 'The code belongs inside the description, not a separate column.');
         $this->assertStringNotContainsString('ACCEPTED TERMS OF PAYMENT', $technicalXml);
         $this->assertStringNotContainsString('ACCEPTED INVOICE CURRENCY', $technicalXml);
         $this->assertStringNotContainsString('Unit Price', $technicalXml);
@@ -316,6 +315,28 @@ class QuotationRevisionDocumentTest extends TestCase
             ->assertJsonPath('data.revision_action', 'created');
 
         $this->assertDatabaseCount('quotation_versions', 2);
+    }
+
+    public function test_download_refreshes_the_old_layout_without_changing_the_saved_revision(): void
+    {
+        $context = $this->quotationContext();
+        $quotationId = $this->createCompleteQuotation($context);
+        $version = $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/finalize")->assertCreated()->json('data');
+        $before = QuotationVersion::where('quotation_id', $quotationId)->firstOrFail()->snapshot;
+        foreach (['commercial', 'technical'] as $type) {
+            $path = $type === 'commercial' ? $version['pdf_path'] : str_replace('.pdf', '-technical.pdf', $version['pdf_path']);
+            Storage::disk('local')->put($path, '%PDF-old-template');
+            Storage::disk('local')->put($path.'.layout', 'old-layout');
+            $this->withBearerToken($context['salesperson'])->get("/api/quotations/{$quotationId}/versions/1/download/{$type}/pdf")->assertOk();
+            $pdf = Storage::disk('local')->get($path);
+            $this->assertStringStartsWith('%PDF', $pdf);
+            $this->assertStringNotContainsString('old-template', $pdf);
+            $this->assertMatchesRegularExpression('/MediaBox\s*\[0(?:\.\d+)?\s+0(?:\.\d+)?\s+612(?:\.\d+)?\s+792(?:\.\d+)?\]/', $pdf);
+            $this->assertSame(QuotationOfferLayout::VERSION, Storage::disk('local')->get($path.'.layout'));
+        }
+        $this->assertDatabaseCount('quotation_versions', 1);
+        $this->assertSame($before, QuotationVersion::where('quotation_id', $quotationId)->firstOrFail()->snapshot);
     }
 
     public function test_downloading_a_malformed_existing_word_revision_repairs_it_from_the_saved_snapshot(): void
@@ -569,8 +590,8 @@ class QuotationRevisionDocumentTest extends TestCase
         $this->assertStringContainsString('<v:imagedata', $headerXml);
         $this->assertStringContainsString('<v:imagedata', $footerXml);
         $this->assertStringContainsString('Page ', $footerXml);
-        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>PAGE<\/w:instrText>/', $footerXml);
-        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>NUMPAGES<\/w:instrText>/', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>\s*PAGE\s*<\/w:instrText>/', $footerXml);
+        $this->assertMatchesRegularExpression('/<w:instrText\b[^>]*>\s*NUMPAGES\s*<\/w:instrText>/', $footerXml);
         $this->assertStringNotContainsString('riyada', strtolower($documentXml.$relationshipsXml.$headerXml.$footerXml));
     }
 

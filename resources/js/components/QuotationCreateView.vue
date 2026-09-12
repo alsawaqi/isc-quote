@@ -20,6 +20,7 @@ import {
 import { downloadProtectedFile, requestJson } from '../auth';
 import RichTextEditor from './RichTextEditor.vue';
 import { sanitizeRichTextHtml } from '../richText';
+import { quotationLine, quotationPricing } from '../quotationPricing';
 
 interface SupplierOption {
     company_id: number;
@@ -534,6 +535,7 @@ const canSaveItems = computed(() => {
         ) &&
         charges.value.every((charge) => charge.label.trim() && Number(charge.amount) >= 0) &&
         discounts.value.every((discount) => discount.label.trim() && Number(discount.amount) >= 0 && (discount.discount_type !== 'percentage' || Number(discount.amount) <= 100)) &&
+        !pricing.value.discountsExceedBase &&
         !isSavingItems.value
     );
 });
@@ -552,35 +554,12 @@ const canSaveTerms = computed(() => {
     return Boolean(currentQuotation.value) && defaultsReady && customTermsReady && !isSavingTerms.value;
 });
 
-const quotationSubtotal = computed(() => {
-    return items.value.reduce((total, item) => total + lineTotal(item), 0);
-});
-
-const quotationVatTotal = computed(() => {
-    const rawVat = items.value.reduce((total, item) => total + lineVatAmount(item), 0);
-
-    if (rawVat <= 0 || discountBase.value <= 0 || discountsTotal.value <= 0) {
-        return Math.max(0, rawVat);
-    }
-
-    const discountedBase = Math.max(0, discountBase.value - discountsTotal.value);
-
-    return Math.max(0, rawVat * (discountedBase / discountBase.value));
-});
-
-const chargesTotal = computed(() => charges.value.reduce((total, charge) => total + Number(charge.amount || 0), 0));
-
-const discountBase = computed(() => quotationSubtotal.value + chargesTotal.value);
-
-const discountsTotal = computed(() => {
-    return discounts.value.reduce((total, discount) => {
-        const amount = Number(discount.amount || 0);
-
-        return total + (discount.discount_type === 'percentage' ? discountBase.value * Math.min(Math.max(amount, 0), 100) / 100 : Math.min(amount, discountBase.value));
-    }, 0);
-});
-
-const quotationGrandTotal = computed(() => Math.max(0, quotationSubtotal.value + chargesTotal.value - discountsTotal.value + quotationVatTotal.value));
+const pricing = computed(() => quotationPricing(items.value, charges.value, discounts.value, form.vat_pricing));
+const quotationSubtotal = computed(() => pricing.value.subtotal);
+const quotationVatTotal = computed(() => pricing.value.vat);
+const chargesTotal = computed(() => pricing.value.charges);
+const discountsTotal = computed(() => pricing.value.discounts);
+const quotationGrandTotal = computed(() => pricing.value.total);
 
 const canFinalize = computed(() => canReview.value && !isFinalizing.value);
 
@@ -646,30 +625,11 @@ function paymentScheduleDueText(schedule: PaymentScheduleForm): string {
 }
 
 function lineTotal(item: QuotationItemForm): number {
-    const gross = Number(item.quantity || 0) * Number(item.unit_price || 0);
-    const vatRate = Number(item.vat_rate || 0);
-
-    if (form.vat_pricing === 'inclusive' && vatRate > 0) {
-        return gross / (1 + vatRate / 100);
-    }
-
-    return gross;
-}
-
-function lineVatAmount(item: QuotationItemForm): number {
-    const gross = Number(item.quantity || 0) * Number(item.unit_price || 0);
-
-    if (form.vat_pricing === 'inclusive') {
-        return Math.max(0, gross - lineTotal(item));
-    }
-
-    return lineTotal(item) * (Number(item.vat_rate || 0) / 100);
+    return quotationLine(item, form.vat_pricing).net;
 }
 
 function lineTotalWithVat(item: QuotationItemForm): number {
-    return form.vat_pricing === 'inclusive'
-        ? Number(item.quantity || 0) * Number(item.unit_price || 0)
-        : lineTotal(item) + lineVatAmount(item);
+    return quotationLine(item, form.vat_pricing).gross;
 }
 
 function hasRichTextContent(value: string): boolean {
@@ -1852,6 +1812,8 @@ onMounted(loadOptions);
                         Add Discount
                     </button>
                 </div>
+                <p>Discounts apply before VAT to the subtotal plus charges. Percentage discounts each use that original amount.</p>
+                <p v-if="pricing.discountsExceedBase" class="form-error" role="alert">Combined discounts cannot exceed the subtotal plus charges before VAT. Reduce the discounts to save.</p>
                 <div v-if="discounts.length === 0" class="terms-empty">No discounts added.</div>
                 <article v-for="(discount, index) in discounts" :key="discount.key" class="adjustment-row">
                     <label class="quote-field">
@@ -2053,7 +2015,7 @@ onMounted(loadOptions);
                     <div class="review-list">
                         <article v-for="(item, index) in items" :key="item.key">
                             <strong>{{ index + 1 }}. {{ item.product_code }} - {{ item.title }}</strong>
-                            <span>{{ optionName(options.manufacturers, item.manufacturer_id) }} - {{ item.quantity }} {{ item.uom }} x {{ money(item.unit_price) }} + {{ money(item.vat_rate) }}% VAT</span>
+                            <span>{{ optionName(options.manufacturers, item.manufacturer_id) }} - {{ item.quantity }} {{ item.uom }} x {{ money(item.unit_price) }} {{ form.vat_pricing === 'inclusive' ? '(includes ' + money(item.vat_rate) + '% VAT)' : '+ ' + money(item.vat_rate) + '% VAT' }}</span>
                             <small>Delivery: {{ form.delivery_period_min }} to {{ form.delivery_period_max }} {{ form.delivery_period_type }} weeks | {{ incotermOptionLabel(item.incoterm_id) }}</small>
                             <b>{{ form.accepted_invoice_currency }} {{ money(lineTotalWithVat(item)) }}</b>
                         </article>
@@ -2064,10 +2026,10 @@ onMounted(loadOptions);
                             <span>Additional charge</span>
                             <b>{{ form.accepted_invoice_currency }} {{ money(charge.amount) }}</b>
                         </article>
-                        <article v-for="discount in discounts" :key="discount.key">
+                        <article v-for="(discount, index) in discounts" :key="discount.key">
                             <strong>{{ discount.label }}</strong>
                             <span>{{ discount.discount_type === 'percentage' ? `${money(discount.amount)}% discount` : 'Fixed discount' }}</span>
-                            <b>-{{ form.accepted_invoice_currency }} {{ money(discount.discount_type === 'percentage' ? discountBase * Math.min(Math.max(Number(discount.amount || 0), 0), 100) / 100 : Math.min(Number(discount.amount || 0), discountBase)) }}</b>
+                            <b>-{{ form.accepted_invoice_currency }} {{ money(pricing.discountValues[index]) }}</b>
                         </article>
                     </div>
                     <div class="review-total">

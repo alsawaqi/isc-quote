@@ -1,0 +1,352 @@
+[
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "percentage",
+        "amount": 10
+      }
+    ],
+    "values": [
+      "10.000"
+    ],
+    "exceeds": false,
+    "name": "exclusive percentage",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 100,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "4.500",
+      "0.000",
+      "10.000",
+      "94.500"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "fixed",
+        "amount": 10
+      }
+    ],
+    "values": [
+      "10.000"
+    ],
+    "exceeds": false,
+    "name": "inclusive fixed before VAT",
+    "mode": "inclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 105,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "4.500",
+      "0.000",
+      "10.000",
+      "94.500"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "percentage",
+        "amount": 10
+      },
+      {
+        "discount_type": "percentage",
+        "amount": 10
+      }
+    ],
+    "values": [
+      "10.000",
+      "10.000"
+    ],
+    "exceeds": false,
+    "name": "additive percentages",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 100,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "4.000",
+      "0.000",
+      "20.000",
+      "84.000"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [],
+    "values": [],
+    "exceeds": false,
+    "name": "fractional line rounding",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 0.5,
+        "unit_price": 0.333,
+        "vat_rate": 5
+      },
+      {
+        "quantity": 0.5,
+        "unit_price": 0.333,
+        "vat_rate": 5
+      },
+      {
+        "quantity": 0.5,
+        "unit_price": 0.333,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "0.501",
+      "0.024",
+      "0.000",
+      "0.000",
+      "0.525"
+    ]
+  },
+  {
+    "charges": [
+      {
+        "amount": 25
+      }
+    ],
+    "discounts": [
+      {
+        "discount_type": "fixed",
+        "amount": 10
+      },
+      {
+        "discount_type": "percentage",
+        "amount": 5
+      }
+    ],
+    "values": [
+      "10.000",
+      "17.775"
+    ],
+    "exceeds": false,
+    "name": "mixed rates and charges",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 2,
+        "unit_price": 150.25,
+        "vat_rate": 5
+      },
+      {
+        "quantity": 3,
+        "unit_price": 10,
+        "vat_rate": 0
+      }
+    ],
+    "expected": [
+      "330.500",
+      "13.851",
+      "25.000",
+      "27.775",
+      "341.576"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "fixed",
+        "amount": 80
+      },
+      {
+        "discount_type": "fixed",
+        "amount": 80
+      }
+    ],
+    "values": [
+      "80.000",
+      "20.000"
+    ],
+    "exceeds": true,
+    "name": "overlapping discounts capped for legacy records",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 100,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "0.000",
+      "0.000",
+      "100.000",
+      "0.000"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "percentage",
+        "amount": 100
+      }
+    ],
+    "values": [
+      "100.000"
+    ],
+    "exceeds": false,
+    "name": "100 percent discount",
+    "mode": "inclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 105,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "0.000",
+      "0.000",
+      "100.000",
+      "0.000"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [],
+    "values": [],
+    "exceeds": false,
+    "name": "free items and no VAT",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 0
+      }
+    ],
+    "expected": [
+      "0.000",
+      "0.000",
+      "0.000",
+      "0.000",
+      "0.000"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [],
+    "values": [],
+    "exceeds": false,
+    "name": "inclusive fractional rounding",
+    "mode": "inclusive",
+    "items": [
+      {
+        "quantity": 0.5,
+        "unit_price": 0.333,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "0.159",
+      "0.008",
+      "0.000",
+      "0.000",
+      "0.167"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [],
+    "values": [],
+    "exceeds": false,
+    "name": "input precision normalized before multiplication",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": "1.0005",
+        "unit_price": "10.0005",
+        "vat_rate": 0
+      }
+    ],
+    "expected": [
+      "10.011",
+      "0.000",
+      "0.000",
+      "0.000",
+      "10.011"
+    ]
+  },
+  {
+    "charges": [],
+    "discounts": [
+      {
+        "discount_type": "percentage",
+        "amount": 10
+      }
+    ],
+    "values": [
+      "0.001"
+    ],
+    "exceeds": false,
+    "name": "scientific input and half-up discount",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": "1e0",
+        "unit_price": "0.005",
+        "vat_rate": 0
+      }
+    ],
+    "expected": [
+      "0.005",
+      "0.000",
+      "0.000",
+      "0.001",
+      "0.004"
+    ]
+  },
+  {
+    "charges": [
+      {
+        "amount": 20
+      }
+    ],
+    "discounts": [],
+    "values": [],
+    "exceeds": false,
+    "name": "charges preserve existing untaxed treatment",
+    "mode": "exclusive",
+    "items": [
+      {
+        "quantity": 1,
+        "unit_price": 100,
+        "vat_rate": 5
+      }
+    ],
+    "expected": [
+      "100.000",
+      "5.000",
+      "20.000",
+      "0.000",
+      "125.000"
+    ]
+  }
+]

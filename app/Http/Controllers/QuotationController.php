@@ -25,6 +25,7 @@ use App\Models\User;
 use App\Services\PrivateUploadDownloadService;
 use App\Services\QuotationDescriptionChangeClassifier;
 use App\Services\QuotationDocumentService;
+use App\Services\QuotationPricing;
 use App\Services\RichTextSanitizer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -527,6 +528,13 @@ class QuotationController extends Controller
             }
         }
 
+        $pricing = QuotationPricing::calculate($validated['items'], $validated['charges'] ?? [], $validated['discounts'] ?? [], $validated['vat_pricing'] ?? 'exclusive');
+        if ($pricing['discounts_exceed_base']) {
+            throw ValidationException::withMessages([
+                'discounts' => 'Combined discounts cannot exceed the subtotal plus charges before VAT.',
+            ]);
+        }
+
         $quotation = DB::transaction(function () use ($quotation, $validated): Quotation {
             $vatPricing = $validated['vat_pricing'] ?? 'exclusive';
             $quotation->forceFill(['vat_pricing' => $vatPricing])->save();
@@ -568,7 +576,7 @@ class QuotationController extends Controller
                     'incoterm_id' => $item['incoterm_id'] ?? $quotation->incoterm_id,
                     'unit_price' => $this->money($item['unit_price']),
                     'vat_rate' => $this->money($item['vat_rate'] ?? 0),
-                    'total_price' => $this->money($this->lineNetTotal((float) $item['quantity'], (float) $item['unit_price'], (float) ($item['vat_rate'] ?? 0), $vatPricing)),
+                    'total_price' => QuotationPricing::line($item, $vatPricing)['net'],
                 ]);
             }
 
@@ -914,19 +922,19 @@ class QuotationController extends Controller
         $documents = app(QuotationDocumentService::class);
 
         if ($documentType === 'technical') {
-            if ($format === 'docx' && ! $documents->docxXmlPartsAreParseable($path)) {
+            if ($format === 'docx' && ($documents->needsLayoutRefresh($path) || ! $documents->docxXmlPartsAreParseable($path))) {
                 $documents->writeTechnicalDocx($version->snapshot, $path);
             }
 
-            if ($format === 'pdf' && ! Storage::disk('local')->exists($path)) {
+            if ($format === 'pdf' && $documents->needsLayoutRefresh($path)) {
                 $documents->writeTechnicalPdf($version->snapshot, $path);
             }
         } else {
-            if ($format === 'docx' && ! $documents->docxXmlPartsAreParseable($path)) {
+            if ($format === 'docx' && ($documents->needsLayoutRefresh($path) || ! $documents->docxXmlPartsAreParseable($path))) {
                 $documents->writeDocx($version->snapshot, $path);
             }
 
-            if ($format === 'pdf' && ! Storage::disk('local')->exists($path)) {
+            if ($format === 'pdf' && $documents->needsLayoutRefresh($path)) {
                 $documents->writePdf($version->snapshot, $path);
             }
         }
@@ -2292,74 +2300,20 @@ class QuotationController extends Controller
      */
     private function quotationTotals(Quotation $quotation): array
     {
-        $quotation->loadMissing(['items', 'charges', 'discounts']);
-        $vatPricing = $quotation->vat_pricing ?? 'exclusive';
-        $itemsSubtotal = $quotation->items->sum(fn (QuotationItem $item): float => (float) $item->total_price);
-        $rawVatTotal = $quotation->items->sum(fn (QuotationItem $item): float => $this->lineVatAmount($item, $vatPricing));
-        $chargesTotal = $quotation->charges->sum(fn (QuotationCharge $charge): float => (float) $charge->amount);
-        $discountBase = $itemsSubtotal + $chargesTotal;
-        $discountsTotal = $quotation->discounts->sum(fn (QuotationDiscount $discount): float => $this->discountValue($discount, $discountBase));
-        $discountedBase = max(0, $discountBase - $discountsTotal);
-        $vatTotal = $this->discountedVatTotal($rawVatTotal, $discountBase, $discountsTotal);
-        $grandTotal = max(0, $discountedBase + $vatTotal);
+        $totals = QuotationPricing::forQuotation($quotation);
+        unset($totals['discount_values'], $totals['discounts_exceed_base']);
 
-        return [
-            'subtotal' => $this->money($itemsSubtotal),
-            'items_subtotal' => $this->money($itemsSubtotal),
-            'vat_total' => $this->money($vatTotal),
-            'charges_total' => $this->money($chargesTotal),
-            'discounts_total' => $this->money($discountsTotal),
-            'grand_total' => $this->money($grandTotal),
-        ];
-    }
-
-    private function lineNetTotal(float $quantity, float $unitPrice, float $vatRate, string $vatPricing): float
-    {
-        $gross = $quantity * $unitPrice;
-
-        if ($vatPricing === 'inclusive' && $vatRate > 0) {
-            return $gross / (1 + ($vatRate / 100));
-        }
-
-        return $gross;
+        return ['subtotal' => $totals['items_subtotal'], ...$totals];
     }
 
     private function lineGrossTotal(QuotationItem $item, string $vatPricing): float
     {
-        if ($vatPricing === 'inclusive') {
-            return (float) $item->quantity * (float) $item->unit_price;
-        }
-
-        return (float) $item->total_price + $this->lineVatAmount($item, $vatPricing);
+        return (float) QuotationPricing::line($item->getAttributes(), $vatPricing)['gross'];
     }
 
     private function lineVatAmount(QuotationItem $item, string $vatPricing): float
     {
-        if ($vatPricing === 'inclusive') {
-            return max(0, ((float) $item->quantity * (float) $item->unit_price) - (float) $item->total_price);
-        }
-
-        return (float) $item->total_price * ((float) $item->vat_rate / 100);
-    }
-
-    private function discountValue(QuotationDiscount $discount, float $base): float
-    {
-        if ($discount->discount_type === 'percentage') {
-            return $base * min(100, max(0, (float) $discount->amount)) / 100;
-        }
-
-        return min($base, max(0, (float) $discount->amount));
-    }
-
-    private function discountedVatTotal(float $rawVatTotal, float $discountBase, float $discountsTotal): float
-    {
-        if ($rawVatTotal <= 0 || $discountBase <= 0 || $discountsTotal <= 0) {
-            return max(0, $rawVatTotal);
-        }
-
-        $discountedBase = max(0, $discountBase - $discountsTotal);
-
-        return max(0, $rawVatTotal * ($discountedBase / $discountBase));
+        return (float) QuotationPricing::line($item->getAttributes(), $vatPricing)['vat'];
     }
 
     private function money(mixed $value): string

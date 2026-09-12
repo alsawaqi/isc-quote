@@ -794,6 +794,65 @@ class QuotationStepOneTest extends TestCase
     /**
      * @return array<string, mixed>
      */
+    public function test_fractional_pricing_matches_saved_items_and_document_snapshot(): void
+    {
+        $context = $this->quotationContext();
+        $manufacturer = Manufacturer::create(['country_id' => $context['country']->id, 'name' => 'Pricing Test', 'status' => 'active']);
+        $quotationId = $this->createQuotation($context);
+        $items = array_map(fn ($index) => [
+            'manufacturer_id' => $manufacturer->id,
+            'product_code' => 'ROUND-'.$index,
+            'product_name' => 'Fractional item',
+            'title' => 'Fractional item',
+            'quantity' => '0.500', 'uom' => 'EA', 'unit_price' => '0.333', 'vat_rate' => '5.000',
+        ], range(1, 3));
+
+        foreach (['exclusive' => ['0.501', '0.024', '0.525'], 'inclusive' => ['0.477', '0.024', '0.501']] as $mode => $expected) {
+            $response = $this->withBearerToken($context['salesperson'])
+                ->postJson("/api/quotations/{$quotationId}/items", ['vat_pricing' => $mode, 'items' => $items])
+                ->assertOk()
+                ->assertJsonPath('data.totals.items_subtotal', $expected[0])
+                ->assertJsonPath('data.totals.vat_total', $expected[1])
+                ->assertJsonPath('data.totals.grand_total', $expected[2]);
+            $this->withBearerToken($context['salesperson'])->getJson("/api/quotations/{$quotationId}")
+                ->assertOk()->assertJsonPath('data.totals', $response->json('data.totals'));
+
+            $quotation = \App\Models\Quotation::findOrFail($quotationId);
+            $snapshot = app(\App\Services\QuotationDocumentService::class)->snapshot($quotation, 1);
+            $this->assertSame($expected[0], $snapshot['totals']['subtotal']);
+            $this->assertSame($expected[1], $snapshot['totals']['vat']);
+            $this->assertSame($expected[2], $snapshot['totals']['grand_total']);
+        }
+    }
+
+    public function test_combined_excess_discounts_are_rejected_without_changing_saved_items(): void
+    {
+        $context = $this->quotationContext();
+        $manufacturer = Manufacturer::create(['country_id' => $context['country']->id, 'name' => 'Discount Test', 'status' => 'active']);
+        $quotationId = $this->createQuotation($context);
+        $payload = ['vat_pricing' => 'exclusive', 'items' => [[
+            'manufacturer_id' => $manufacturer->id, 'product_code' => 'DISCOUNT-1',
+            'product_name' => 'Discount item', 'title' => 'Discount item',
+            'quantity' => 1, 'uom' => 'EA', 'unit_price' => 100, 'vat_rate' => 5,
+        ]], 'charges' => [['label' => 'Freight', 'amount' => 20]]];
+        $saved = $this->withBearerToken($context['salesperson'])
+            ->postJson("/api/quotations/{$quotationId}/items", $payload)->assertOk()->json('data');
+
+        foreach ([
+            [['label' => 'First', 'discount_type' => 'fixed', 'amount' => 80], ['label' => 'Second', 'discount_type' => 'fixed', 'amount' => 80]],
+            [['label' => 'First', 'discount_type' => 'percentage', 'amount' => 60], ['label' => 'Second', 'discount_type' => 'percentage', 'amount' => 50]],
+            [['label' => 'Too much', 'discount_type' => 'fixed', 'amount' => 121]],
+        ] as $discounts) {
+            $this->withBearerToken($context['salesperson'])
+                ->postJson("/api/quotations/{$quotationId}/items", [...$payload, 'discounts' => $discounts])
+                ->assertUnprocessable()->assertJsonValidationErrors('discounts');
+        }
+        $this->withBearerToken($context['salesperson'])->getJson("/api/quotations/{$quotationId}")
+            ->assertOk()->assertJsonPath('data.items', $saved['items'])
+            ->assertJsonPath('data.charges', $saved['charges'])->assertJsonPath('data.discounts', [])
+            ->assertJsonPath('data.totals.grand_total', '125.000');
+    }
+
     private function quotationContext(): array
     {
         $country = Country::create([

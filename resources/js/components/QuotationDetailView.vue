@@ -557,7 +557,7 @@ onMounted(loadDetail);
                         <div class="review-list">
                             <article v-for="item in quotation.items" :key="item.id">
                                 <strong>{{ item.line_number }}. {{ item.product_code ?? '-' }} - {{ item.title }}</strong>
-                                <span>{{ item.manufacturer_name ?? '-' }} - {{ item.quantity }} {{ item.uom }} x {{ item.unit_price }} + {{ item.vat_rate }}% VAT</span>
+                                <span>{{ item.manufacturer_name ?? '-' }} - {{ item.quantity }} {{ item.uom }} x {{ item.unit_price }} {{ quotation.vat_pricing === 'inclusive' ? '(includes ' + item.vat_rate + '% VAT)' : '+ ' + item.vat_rate + '% VAT' }}</span>
                                 <small>Delivery: {{ quotation.delivery_period_min }} to {{ quotation.delivery_period_max }} {{ quotation.delivery_period_type }} {{ quotation.delivery_period_unit }} | {{ item.incoterm_code ?? quotation.incoterm_code ?? '-' }}</small>
                                 <b>{{ quotation.accepted_invoice_currency }} {{ money(Number(item.total_with_vat ?? item.total_price)) }}</b>
                             </article>
@@ -571,7 +571,7 @@ onMounted(loadDetail);
                             <article v-for="discount in quotation.discounts" :key="`discount-${discount.line_number}`">
                                 <strong>Discount: {{ discount.label }}</strong>
                                 <span>{{ discount.discount_type === 'percentage' ? 'Percentage discount' : 'Fixed discount' }}</span>
-                                <b>- {{ quotation.accepted_invoice_currency }} {{ discountLabel(discount) }}</b>
+                                <b>- {{ discount.discount_type === 'fixed' ? quotation.accepted_invoice_currency + ' ' : '' }}{{ discountLabel(discount) }}</b>
                             </article>
                         </div>
                         <div class="review-total">
